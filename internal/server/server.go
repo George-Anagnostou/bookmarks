@@ -30,7 +30,11 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
-// Cap response bodies at 64KB
+type listBookmarksResponse struct {
+	Bookmarks []bookmarks.Bookmark `json:"bookmarks"`
+}
+
+// Cap create request bodies at 64KB
 const maxCreateBookmarkBodyBytes = 64 * 1024
 
 // New creates a server and panics if required config is missing.
@@ -94,8 +98,23 @@ func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request) {}
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request)             {}
+func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request) {
+	bookmarksList, err := s.store.ListBookmarks(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+
+	if bookmarksList == nil {
+		bookmarksList = []bookmarks.Bookmark{}
+	}
+
+	writeJSON(w, http.StatusOK, listBookmarksResponse{
+		Bookmarks: bookmarksList,
+	})
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {}
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

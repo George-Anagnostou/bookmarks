@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -157,7 +158,7 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 	}{
 		{
 			name:       "wrong method",
-			method:     http.MethodGet,
+			method:     http.MethodPut,
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
@@ -228,6 +229,135 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListBookmarksJSON(t *testing.T) {
+	now := time.Date(2026, 6, 11, 9, 30, 0, 0, time.UTC)
+	want := []bookmarks.Bookmark{
+		{
+			ID:            "bookmark-2",
+			URL:           "https://example.com/b",
+			NormalizedURL: "https://example.com/b",
+			Title:         "Second",
+			Notes:         "Later",
+			Source:        "mac",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+		{
+			ID:            "bookmark-1",
+			URL:           "https://example.com/a",
+			NormalizedURL: "https://example.com/a",
+			Title:         "First",
+			Source:        "ios",
+			CreatedAt:     now.Add(-time.Hour),
+			UpdatedAt:     now.Add(-time.Hour),
+		},
+	}
+
+	store := &fakeStore{
+		listBookmarks: func(ctx context.Context) ([]bookmarks.Bookmark, error) {
+			return want, nil
+		},
+	}
+	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertJSONContentType(t, rec)
+
+	var got listBookmarksResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !reflect.DeepEqual(got.Bookmarks, want) {
+		t.Fatalf("bookmarks %#q, want %#q", got.Bookmarks, want)
+	}
+}
+
+func TestListBookmarksJSONReturnsEmptyArray(t *testing.T) {
+	store := &fakeStore{
+		listBookmarks: func(ctx context.Context) ([]bookmarks.Bookmark, error) {
+			return nil, nil
+		},
+	}
+	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertJSONContentType(t, rec)
+
+	var got listBookmarksResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Bookmarks == nil {
+		t.Fatal("bookmarks = nil, want empty array")
+	}
+	if len(got.Bookmarks) != 0 {
+		t.Fatalf("len(bookmarks) = %d, want 0", len(got.Bookmarks))
+	}
+}
+
+func TestListBookmarksJSONRequiresBearerToken(t *testing.T) {
+	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+
+	tests := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing"},
+		{name: "wrong token", authorization: "Bearer invalid-test-token"},
+		{name: "wrong scheme", authorization: "Basic test-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+			}
+			assertJSONContentType(t, rec)
+		})
+	}
+}
+
+func TestListBookmarksJSONHandlesStoreError(t *testing.T) {
+	store := &fakeStore{
+		listBookmarks: func(ctx context.Context) ([]bookmarks.Bookmark, error) {
+			return nil, errors.New("database unavailable")
+		},
+	}
+	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	assertJSONContentType(t, rec)
 }
 
 type fakeStore struct {
