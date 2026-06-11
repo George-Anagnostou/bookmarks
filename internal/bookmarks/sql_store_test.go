@@ -45,3 +45,14 @@ func sqliteTableExists(t *testing.T, db *sql.DB, name string) bool {
 	}
 	return count == 1
 }
+
+func TestSQLStoreContract(t *testing.T) {
+	runStoreContractTests(t, func(t *testing.T) Store {
+		store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+		if err != nil {
+			t.Fatalf("OpenSQLStore() error = %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	})
+}

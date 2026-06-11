@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -73,11 +75,160 @@ func (s *SQLStore) Close() error {
 }
 
 func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookmark, bool, error) {
-	return Bookmark{}, false, ErrNotImplemented
+	id, err := NewID()
+	if err != nil {
+		return Bookmark{}, false, err
+	}
+
+	normalizedURL, err := NormalizeURL(input.URL)
+	if err != nil {
+		return Bookmark{}, false, err
+	}
+
+	now := time.Now().UTC()
+
+	bookmark := Bookmark{
+		ID:            id,
+		URL:           strings.TrimSpace(input.URL),
+		NormalizedURL: normalizedURL,
+		Title:         input.Title,
+		Notes:         input.Notes,
+		Source:        input.Source,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	result, err := s.db.ExecContext(
+		ctx, `
+		INSERT OR IGNORE INTO bookmarks (
+			id,
+			url,
+			normalized_url,
+			title,
+			notes,
+			source,
+			created_at,
+			updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+		bookmark.ID,
+		bookmark.URL,
+		bookmark.NormalizedURL,
+		bookmark.Title,
+		bookmark.Notes,
+		bookmark.Source,
+		bookmark.CreatedAt.Format(time.RFC3339Nano),
+		bookmark.UpdatedAt.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return Bookmark{}, false, fmt.Errorf("insert bookmark: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Bookmark{}, false, fmt.Errorf("check inserted bookmark: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		bookmark, err := s.bookmarkByNormalizedURL(ctx, normalizedURL)
+		if err != nil {
+			return Bookmark{}, false, err
+		}
+
+		return bookmark, false, nil
+	}
+
+	return bookmark, true, nil
 }
 
 func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
-	return nil, ErrNotImplemented
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
+		FROM bookmarks
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list bookmarks: %w", err)
+	}
+	defer rows.Close()
+
+	var bookmarks []Bookmark
+
+	for rows.Next() {
+		var b Bookmark
+		var createdAt string
+		var updatedAt string
+
+		if err := rows.Scan(
+			&b.ID,
+			&b.URL,
+			&b.NormalizedURL,
+			&b.Title,
+			&b.Notes,
+			&b.Source,
+			&createdAt,
+			&updatedAt,
+		); err != nil {
+			return bookmarks, fmt.Errorf("scan bookmarks: %w", err)
+		}
+
+		b.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return bookmarks, fmt.Errorf("list bookmarks: parse createdAt: %w", err)
+		}
+
+		b.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return bookmarks, fmt.Errorf("list bookmarks: parse updatedAt: %w", err)
+		}
+
+		bookmarks = append(bookmarks, b)
+	}
+
+	if err = rows.Err(); err != nil {
+		return bookmarks, fmt.Errorf("iterate bookmarks: %w", err)
+	}
+
+	return bookmarks, nil
+}
+
+func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL string) (Bookmark, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
+		FROM bookmarks
+		WHERE normalized_url = ?
+	`, normalizedURL)
+
+	var b Bookmark
+	var createdAt string
+	var updatedAt string
+
+	err := row.Scan(
+		&b.ID,
+		&b.URL,
+		&b.NormalizedURL,
+		&b.Title,
+		&b.Notes,
+		&b.Source,
+		&createdAt,
+		&updatedAt,
+	)
+	if err != nil {
+		return Bookmark{}, err
+	}
+
+	b.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return Bookmark{}, err
+	}
+
+	b.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return Bookmark{}, err
+	}
+
+	return b, nil
 }
 
 func sqliteDSN(path string) string {
