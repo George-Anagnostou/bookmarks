@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,12 @@ func TestCreateBookmark(t *testing.T) {
 			if input.Title != "Example" {
 				t.Fatalf("input.Title = %q, want %q", input.Title, "Example")
 			}
+			if input.Notes != "Read later" {
+				t.Fatalf("input.Notes = %q, want %q", input.Notes, "Read later")
+			}
+			if input.Source != "test" {
+				t.Fatalf("input.Source = %q, want %q", input.Source, "test")
+			}
 			return bookmark, true, nil
 		},
 	}
@@ -53,6 +60,7 @@ func TestCreateBookmark(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
+	assertJSONContentType(t, rec)
 
 	var got createBookmarkResponse
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
@@ -89,6 +97,7 @@ func TestCreateBookmarkDuplicate(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	assertJSONContentType(t, rec)
 
 	var got createBookmarkResponse
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
@@ -158,6 +167,18 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
+			name:       "trailing json",
+			method:     http.MethodPost,
+			body:       `{"url":"https://example.com/a"} {}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "oversized body",
+			method:     http.MethodPost,
+			body:       `{"url":"https://example.com/a","notes":"` + strings.Repeat("x", maxCreateBookmarkBodyBytes) + `"}`,
+			wantStatus: http.StatusRequestEntityTooLarge,
+		},
+		{
 			name:       "empty url",
 			method:     http.MethodPost,
 			body:       `{}`,
@@ -202,6 +223,9 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
 			}
+			if rec.Code != http.StatusMethodNotAllowed {
+				assertJSONContentType(t, rec)
+			}
 		})
 	}
 }
@@ -236,4 +260,12 @@ func newJSONRequest(t *testing.T, method string, path string, body any) *http.Re
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func assertJSONContentType(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
 }
