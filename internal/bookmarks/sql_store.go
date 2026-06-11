@@ -85,7 +85,7 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 		return Bookmark{}, false, err
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Second)
 
 	bookmark := Bookmark{
 		ID:            id,

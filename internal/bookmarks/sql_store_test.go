@@ -58,7 +58,7 @@ func TestSQLStoreContract(t *testing.T) {
 	})
 }
 
-func testSQLStorePersistsAcrossReopen(t *testing.T) {
+func TestSQLStorePersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bookmarks.db")
 
 	store, err := OpenSQLStore(path)

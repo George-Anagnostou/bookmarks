@@ -66,11 +66,12 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			Source: source,
 		})
 		if err != nil {
-			t.Fatalf("ListBookmarks() error = %v", err)
+			t.Fatalf("CreateBookmark() error = %v", err)
 		}
 		if !created {
-			t.Fatalf("ListBookmarks() created = false, want true")
+			t.Fatalf("CreateBookmark() created = false, want true")
 		}
+
 		if first.URL != url {
 			t.Fatalf("got %v, wanted %v", first.URL, url)
 		}
@@ -79,6 +80,27 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		if first.Source != source {
 			t.Fatalf("got %v, wanted %v", first.Source, source)
+		}
+
+		bookmarks, err := store.ListBookmarks(context.Background())
+		if err != nil {
+			t.Fatalf("ListBookmarks() error = %v", err)
+		}
+
+		if len(bookmarks) != 1 {
+			t.Fatalf("ListBookmarks() returned %d bookmarks, want 1", len(bookmarks))
+		}
+
+		got := bookmarks[0]
+
+		if got.URL != url {
+			t.Fatalf("got %v, wanted %v", got.URL, url)
+		}
+		if got.Title != title {
+			t.Fatalf("got %v, wanted %v", got.Title, title)
+		}
+		if got.Source != source {
+			t.Fatalf("got %v, wanted %v", got.Source, source)
 		}
 	})
 
