@@ -54,4 +54,42 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("duplicate returned ID %q, want %q", second.ID, first.ID)
 		}
 	})
+
+	t.Run("check fields come back from ListBookmarks()", func(t *testing.T) {
+		store := newStore(t)
+		url := "https://example.com/a"
+		title := "Example"
+		source := "laptop"
+		first, created, err := store.CreateBookmark(context.Background(), CreateInput{
+			URL:    url,
+			Title:  title,
+			Source: source,
+		})
+		if err != nil {
+			t.Fatalf("ListBookmarks() error = %v", err)
+		}
+		if !created {
+			t.Fatalf("ListBookmarks() created = false, want true")
+		}
+		if first.URL != url {
+			t.Fatalf("got %v, wanted %v", first.URL, url)
+		}
+		if first.Title != title {
+			t.Fatalf("got %v, wanted %v", first.Title, title)
+		}
+		if first.Source != source {
+			t.Fatalf("got %v, wanted %v", first.Source, source)
+		}
+	})
+
+	t.Run("check unsupported schemas", func(t *testing.T) {
+		store := newStore(t)
+		_, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: "ftp://example.com"})
+		if err != ErrUnsupported {
+			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, ErrUnsupported)
+		}
+		if created {
+			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, ErrUnsupported)
+		}
+	})
 }

@@ -1,6 +1,7 @@
 package bookmarks
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -55,4 +56,45 @@ func TestSQLStoreContract(t *testing.T) {
 		t.Cleanup(func() { _ = store.Close() })
 		return store
 	})
+}
+
+func testSQLStorePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmarks.db")
+
+	store, err := OpenSQLStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		URL:   "https://example.com/a",
+		Title: "Example",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("created = false, want true")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = OpenSQLStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	got, err := store.ListBookmarks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].NormalizedURL != "https://example.com/a" {
+		t.Fatalf("NormalizedURL = %q", got[0].NormalizedURL)
+	}
 }

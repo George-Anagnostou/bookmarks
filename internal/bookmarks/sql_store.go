@@ -118,8 +118,8 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 		bookmark.Title,
 		bookmark.Notes,
 		bookmark.Source,
-		bookmark.CreatedAt.Format(time.RFC3339Nano),
-		bookmark.UpdatedAt.Format(time.RFC3339Nano),
+		bookmark.CreatedAt.Format(time.RFC3339),
+		bookmark.UpdatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
 		return Bookmark{}, false, fmt.Errorf("insert bookmark: %w", err)
@@ -173,12 +173,12 @@ func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
 			return bookmarks, fmt.Errorf("scan bookmarks: %w", err)
 		}
 
-		b.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		b.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 		if err != nil {
 			return bookmarks, fmt.Errorf("list bookmarks: parse createdAt: %w", err)
 		}
 
-		b.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		b.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 		if err != nil {
 			return bookmarks, fmt.Errorf("list bookmarks: parse updatedAt: %w", err)
 		}
@@ -218,12 +218,12 @@ func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL st
 		return Bookmark{}, err
 	}
 
-	b.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	b.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 	if err != nil {
 		return Bookmark{}, err
 	}
 
-	b.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+	b.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 	if err != nil {
 		return Bookmark{}, err
 	}
