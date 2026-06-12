@@ -2,9 +2,7 @@ package main
 
 import (
 	"errors"
-	"net/http"
 	"strings"
-	"time"
 )
 
 type config struct {
