@@ -45,14 +45,3 @@ func loadConfig(lookup func(string) (string, bool)) (config, error) {
 
 	return cfg, nil
 }
-
-func newHTTPServer(cfg config, handler http.Handler) *http.Server {
-	return &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-}

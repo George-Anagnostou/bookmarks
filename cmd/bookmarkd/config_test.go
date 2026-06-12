@@ -51,13 +51,6 @@ func TestLoadConfigRequiresToken(t *testing.T) {
 	}
 }
 
-func mapLookup(values map[string]string) func(string) (string, bool) {
-	return func(key string) (string, bool) {
-		value, ok := values[key]
-		return value, ok
-	}
-}
-
 func TestLoadConfigRejectsBlankToken(t *testing.T) {
 	_, err := loadConfig(mapLookup(map[string]string{
 		"BOOKMARKS_TOKEN": " ",
@@ -67,33 +60,9 @@ func TestLoadConfigRejectsBlankToken(t *testing.T) {
 	}
 }
 
-func TestNewHTTPServer(t *testing.T) {
-	cfg := config{Addr: "127.0.0.1:9999", Token: "test-token"}
-	handler := http.NewServeMux()
-
-	srv := newHTTPServer(cfg, handler)
-
-	if srv.Addr != cfg.Addr {
-		t.Fatalf("Addr = %q", srv.Addr)
-	}
-
-	if srv.Handler != handler {
-		t.Fatalf("Handler was not set")
-	}
-
-	if srv.ReadHeaderTimeout == 0 {
-		t.Fatalf("ReadHeaderTimeout was not set")
-	}
-
-	if srv.ReadTimeout == 0 {
-		t.Fatal("ReadTimeout was not set")
-	}
-
-	if srv.WriteTimeout == 0 {
-		t.Fatal("WriteTimeout was not set")
-	}
-
-	if srv.IdleTimeout == 0 {
-		t.Fatal("IdleTimeout was not set")
+func mapLookup(values map[string]string) func(string) (string, bool) {
+	return func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
 	}
 }
