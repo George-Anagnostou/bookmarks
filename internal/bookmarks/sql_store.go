@@ -3,7 +3,6 @@ package bookmarks
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -12,8 +11,6 @@ import (
 
 	_ "modernc.org/sqlite"
 )
-
-var ErrNotImplemented = errors.New("not implemented")
 
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS bookmarks (
@@ -146,7 +143,7 @@ func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
 		FROM bookmarks
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("list bookmarks: %w", err)
@@ -156,34 +153,12 @@ func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
 	var bookmarks []Bookmark
 
 	for rows.Next() {
-		var b Bookmark
-		var createdAt string
-		var updatedAt string
-
-		if err := rows.Scan(
-			&b.ID,
-			&b.URL,
-			&b.NormalizedURL,
-			&b.Title,
-			&b.Notes,
-			&b.Source,
-			&createdAt,
-			&updatedAt,
-		); err != nil {
+		bkmk, err := scanBookmark(rows)
+		if err != nil {
 			return bookmarks, fmt.Errorf("scan bookmarks: %w", err)
 		}
 
-		b.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			return bookmarks, fmt.Errorf("list bookmarks: parse createdAt: %w", err)
-		}
-
-		b.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
-		if err != nil {
-			return bookmarks, fmt.Errorf("list bookmarks: parse updatedAt: %w", err)
-		}
-
-		bookmarks = append(bookmarks, b)
+		bookmarks = append(bookmarks, bkmk)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -200,11 +175,36 @@ func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL st
 		WHERE normalized_url = ?
 	`, normalizedURL)
 
+	bkmk, err := scanBookmark(row)
+	if err != nil {
+		return Bookmark{}, err
+	}
+	return bkmk, nil
+}
+
+func sqliteDSN(path string) string {
+	u := url.URL{
+		Scheme: "file",
+		Path:   path,
+	}
+	q := u.Query()
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "journal_mode(WAL)")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+type bookmarkScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanBookmark(scanner bookmarkScanner) (Bookmark, error) {
 	var b Bookmark
 	var createdAt string
 	var updatedAt string
 
-	err := row.Scan(
+	err := scanner.Scan(
 		&b.ID,
 		&b.URL,
 		&b.NormalizedURL,
@@ -229,17 +229,4 @@ func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL st
 	}
 
 	return b, nil
-}
-
-func sqliteDSN(path string) string {
-	u := url.URL{
-		Scheme: "file",
-		Path:   path,
-	}
-	q := u.Query()
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "journal_mode(WAL)")
-	u.RawQuery = q.Encode()
-	return u.String()
 }
