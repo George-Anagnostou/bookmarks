@@ -277,7 +277,7 @@ func TestListBookmarksJSON(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if !reflect.DeepEqual(got.Bookmarks, want) {
-		t.Fatalf("bookmarks %#q, want %#q", got.Bookmarks, want)
+		t.Fatalf("bookmarks = %#v, want %#v", got.Bookmarks, want)
 	}
 }
 
