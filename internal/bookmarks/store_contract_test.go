@@ -2,6 +2,7 @@ package bookmarks
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -107,7 +108,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 	t.Run("check unsupported schemas", func(t *testing.T) {
 		store := newStore(t)
 		_, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: "ftp://example.com"})
-		if err != ErrUnsupported {
+		if !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, ErrUnsupported)
 		}
 		if created {

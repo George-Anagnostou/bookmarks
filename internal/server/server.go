@@ -57,7 +57,6 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/bookmarks", s.requireAuth(s.handleCreateBookmark))
 	mux.HandleFunc("GET /api/bookmarks", s.requireAuth(s.handleListBookmarksJSON))
-	// mux.HandleFunc("GET /{$}", s.requireAuth(s.handleIndex))
 	return mux
 }
 
@@ -113,8 +112,6 @@ func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request)
 		Bookmarks: bookmarksList,
 	})
 }
-
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {}
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
