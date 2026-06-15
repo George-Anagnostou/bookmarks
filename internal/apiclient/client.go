@@ -1,6 +1,7 @@
 package apiclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,8 +12,6 @@ import (
 
 	"bookmarks/internal/bookmarks"
 )
-
-var ErrNotImplemented = errors.New("not implemented")
 
 type Config struct {
 	BaseURL    string
@@ -65,7 +64,38 @@ func New(cfg Config) (*Client, error) {
 }
 
 func (c *Client) CreateBookmark(ctx context.Context, input bookmarks.CreateInput) (bookmarks.Bookmark, bool, error) {
-	return bookmarks.Bookmark{}, false, ErrNotImplemented
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(input); err != nil {
+		return bookmarks.Bookmark{}, false, fmt.Errorf("encode request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/bookmarks", &body)
+	if err != nil {
+		return bookmarks.Bookmark{}, false, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return bookmarks.Bookmark{}, false, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return bookmarks.Bookmark{}, false, fmt.Errorf("bookmarks api: %s", resp.Status)
+	}
+
+	var out struct {
+		Bookmark bookmarks.Bookmark `json:"bookmark"`
+		Created  bool               `json:"created"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return bookmarks.Bookmark{}, false, fmt.Errorf("decode response: %w", err)
+	}
+
+	return out.Bookmark, out.Created, nil
 }
 
 func (c *Client) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error) {

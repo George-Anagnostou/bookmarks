@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,6 +119,32 @@ func TestCreateBookmarkDuplicate(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotBookmark, wantBookmark) {
 		t.Fatalf("bookmark = %#v, want %#v", gotBookmark, wantBookmark)
+	}
+}
+
+func TestCreateBookmarkReturnsErrorForNonSuccessStatus(t *testing.T) {
+	var called atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(struct {
+			Error string `json:"error"`
+		}{
+			Error: "unauthorized",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	_, _, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{
+		URL: "https://example.com/a",
+	})
+	if err == nil {
+		t.Fatal("CreateBookmark() error = nil, want error")
+	}
+	if !called.Load() {
+		t.Fatal("CreateBookmark() did not send request")
 	}
 }
 
