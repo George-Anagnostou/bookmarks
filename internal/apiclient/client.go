@@ -2,6 +2,7 @@ package apiclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,5 +69,33 @@ func (c *Client) CreateBookmark(ctx context.Context, input bookmarks.CreateInput
 }
 
 func (c *Client) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error) {
-	return nil, ErrNotImplemented
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/bookmarks", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("bookmarks api: %s", resp.Status)
+	}
+
+	var out struct {
+		Bookmarks []bookmarks.Bookmark `json:"bookmarks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if out.Bookmarks == nil {
+		out.Bookmarks = []bookmarks.Bookmark{}
+	}
+
+	return out.Bookmarks, nil
 }
