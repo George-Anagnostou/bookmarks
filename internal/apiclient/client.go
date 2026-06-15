@@ -58,7 +58,7 @@ func New(cfg Config) (*Client, error) {
 
 	return &Client{
 		baseURL:    baseURL,
-		token:      cfg.Token,
+		token:      token,
 		httpClient: httpClient,
 	}, nil
 }

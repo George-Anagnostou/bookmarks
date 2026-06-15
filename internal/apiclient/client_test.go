@@ -274,6 +274,12 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "token has newline",
+			cfg: Config{
+				Token: "test-token\n",
+			},
+		},
+		{
 			name: "invalid base url",
 			cfg: Config{
 				BaseURL: "://bad-url",
