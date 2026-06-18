@@ -1,2 +1,13 @@
+# Local environment files. Keep checked-in examples.
 .env
+.env.*
+!.env.*.example
+
+# Runtime data.
 data/
+
+# Local build outputs.
+/bookmarkd
+/bookmarkctl
+/bin/
+/dist/
