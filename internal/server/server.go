@@ -57,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/bookmarks", s.requireAuth(s.handleCreateBookmark))
 	mux.HandleFunc("GET /api/bookmarks", s.requireAuth(s.handleListBookmarksJSON))
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux
 }
 
@@ -111,6 +112,10 @@ func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, listBookmarksResponse{
 		Bookmarks: bookmarksList,
 	})
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {

@@ -1,9 +1,11 @@
 # Deployment Automation and Hardening
 
-This document captures the current Debian VPS deployment shape and proposes a
-small automation path for repeatable updates. The project is still intentionally
-simple: one Go daemon, one SQLite database, nginx in front, and systemd keeping
-the process running.
+Status: done for the current alpha deployment workflow.
+
+This document captures the current Debian VPS deployment shape and the
+implemented automation path for repeatable updates. The project is still
+intentionally simple: one Go daemon, one SQLite database, nginx in front, and
+systemd keeping the process running.
 
 ## Current Deployment Model
 
@@ -127,15 +129,13 @@ server {
 After TLS is configured, the important check is:
 
 ```sh
-curl -fsS \
-  -H "Authorization: Bearer $BOOKMARKS_TOKEN" \
-  https://bookmarks.example.com/api/bookmarks
+curl -fsS https://bookmarks.example.com/healthz
 ```
 
-Expected response for an empty database:
+Expected response:
 
 ```json
-{"bookmarks":[]}
+{"status":"ok"}
 ```
 
 ## Hardening Checklist
@@ -166,40 +166,79 @@ The update path should be boring:
 4. Stop or restart the service with systemd.
 5. Atomically install the new binary.
 6. Start the service.
-7. Verify `/api/bookmarks` returns a successful response.
+7. Verify `/healthz` returns a successful response.
 8. Keep the previous binary long enough to roll back.
 
 A first automation pass can live entirely in local shell scripts or a Makefile.
 That is enough for this project. A full deployment tool would be premature.
 
-## Proposed Server Makefile Targets
+## Configuration Names
 
-These are proposals only. Do not add them until the workflow feels right.
+The deployment workflow uses a few names that should stay distinct:
 
-```makefile
-BINARY_DIR := dist
-SERVER_BIN := $(BINARY_DIR)/bookmarkd-linux-amd64
+- `BOOKMARKS_ADDR`: where `bookmarkd` listens on the VPS. This should normally
+  be `127.0.0.1:8080`. It belongs in `/etc/bookmarks/bookmarkd.env`, not in the
+  normal local deploy config.
+- `BOOKMARKS_DOMAIN`: the public hostname nginx serves, such as
+  `bookmarks.example.com`.
+- `BOOKMARKS_URL`: the full public URL used by deploy verification, such as
+  `https://bookmarks.example.com`. If it is not set, scripts derive it from
+  `BOOKMARKS_DOMAIN`.
+- `BOOKMARKS_DEPLOY_HOST`: the SSH target. This can be an `~/.ssh/config` alias
+  such as `mysite`, a `user@host` value, an IP address, or a provider hostname.
+  If it is not set, scripts use `BOOKMARKS_DOMAIN`.
+- `BOOKMARKS_DEPLOY_USER`: optional SSH user. Leave this unset when
+  `BOOKMARKS_DEPLOY_HOST` is an SSH config alias that already defines `User`, or
+  when `BOOKMARKS_DEPLOY_HOST` already contains `user@host`.
+- `BOOKMARKS_TOKEN`: the current bearer token. The server needs it in
+  `/etc/bookmarks/bookmarkd.env`, and authenticated clients need it for API
+  requests. The normal local deploy workflow no longer needs it because
+  verification uses public `/healthz`.
 
-.PHONY: test build-server-linux deploy-server
+For normal local deployment, copy `.env.deploy.example` to `.env.deploy` and set
+the production values there. `.env.deploy` is ignored by git and loaded by the
+Makefile.
 
-test:
-	go test ./...
+## Normal Update Workflow
 
-build-server-linux:
-	mkdir -p $(BINARY_DIR)
-	GOOS=linux GOARCH=amd64 go build -trimpath -o $(SERVER_BIN) ./cmd/bookmarkd
+After the VPS has been bootstrapped, the normal update path is one command from
+the development machine:
 
-deploy-server: test build-server-linux
-	./scripts/deploy-bookmarkd.sh $(SERVER_BIN)
+```sh
+make update
 ```
 
-If the VPS is ARM, either change `GOARCH` to `arm64` or add a separate server
-target:
+That command runs tests, builds the Linux `bookmarkd` binary, copies it to the
+VPS, creates a database backup if the production database exists, preserves the
+previous binary, restarts the systemd service, and verifies public `/healthz`.
 
-```makefile
-build-server-linux-arm64:
-	mkdir -p $(BINARY_DIR)
-	GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY_DIR)/bookmarkd-linux-arm64 ./cmd/bookmarkd
+Rollback is also one command:
+
+```sh
+make rollback
+```
+
+## Local Build Targets
+
+Server builds are handled by the root `Makefile`:
+
+```sh
+make test
+make build-server
+make update
+make rollback
+```
+
+The default server build target is Linux amd64:
+
+```text
+dist/bookmarkd-linux-amd64
+```
+
+For an ARM VPS, override the architecture:
+
+```sh
+make build-server SERVER_GOARCH=arm64
 ```
 
 The `bookmarkctl` CLI is intentionally not part of server deployment. Build it
@@ -212,144 +251,107 @@ go build -trimpath -o bookmarkctl ./cmd/bookmarkctl
 That may be macOS, Linux, BSD, or another local client environment. If local CLI
 installation becomes repetitive, add separate client-side automation later.
 
-## Proposed Deploy Script
+## Deploy Script
 
-This script would run from the development machine and copy a built daemon to
-the VPS. It assumes SSH access and sudo privileges on the VPS.
-
-```sh
-#!/bin/sh
-set -eu
-
-if [ "$#" -ne 1 ]; then
-  echo "usage: $0 path/to/bookmarkd" >&2
-  exit 2
-fi
-
-LOCAL_BIN="$1"
-REMOTE_HOST="${BOOKMARKS_DEPLOY_HOST:?set BOOKMARKS_DEPLOY_HOST}"
-REMOTE_USER="${BOOKMARKS_DEPLOY_USER:-root}"
-REMOTE_TMP="/tmp/bookmarkd.$$"
-
-scp "$LOCAL_BIN" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_TMP"
-
-ssh "$REMOTE_USER@$REMOTE_HOST" sh -eu <<EOF
-sudo install -o root -g root -m 0755 "$REMOTE_TMP" /usr/local/bin/bookmarkd.new
-sudo rm -f "$REMOTE_TMP"
-
-if [ -x /usr/local/bin/bookmarkd ]; then
-  sudo cp /usr/local/bin/bookmarkd /usr/local/bin/bookmarkd.previous
-fi
-
-sudo mv /usr/local/bin/bookmarkd.new /usr/local/bin/bookmarkd
-sudo systemctl restart bookmarkd
-sudo systemctl --no-pager --full status bookmarkd
-EOF
-```
-
-Open question: if deployment is usually from macOS to Debian, this script is
-probably enough. If deployment is usually performed on the VPS itself via
-`git pull`, the better script would run on the VPS and build locally.
-
-## Proposed Remote Bootstrap Script
-
-This script would run once on a fresh Debian VPS. It should be reviewed
-carefully before use because it creates users, directories, service files, and
-nginx config.
+`scripts/deploy-bookmarkd.sh` runs from the development machine and copies a
+built daemon to the VPS over SSH. `BOOKMARKS_DEPLOY_HOST` can be an SSH config
+alias, so root SSH can live in `~/.ssh/config` for now:
 
 ```sh
-#!/bin/sh
-set -eu
-
-DOMAIN="${BOOKMARKS_DOMAIN:?set BOOKMARKS_DOMAIN}"
-TOKEN="${BOOKMARKS_TOKEN:?set BOOKMARKS_TOKEN}"
-
-sudo useradd --system --home /var/lib/bookmarks --shell /usr/sbin/nologin bookmarks 2>/dev/null || true
-sudo install -d -o bookmarks -g bookmarks -m 0750 /var/lib/bookmarks
-sudo install -d -o root -g root -m 0750 /etc/bookmarks
-
-sudo tee /etc/bookmarks/bookmarkd.env >/dev/null <<EOF
-BOOKMARKS_ADDR=127.0.0.1:8080
-BOOKMARKS_DBPATH=/var/lib/bookmarks/bookmarks.db
-BOOKMARKS_TOKEN=$TOKEN
-EOF
-
-sudo chown root:root /etc/bookmarks/bookmarkd.env
-sudo chmod 0600 /etc/bookmarks/bookmarkd.env
-
-sudo tee /etc/systemd/system/bookmarkd.service >/dev/null <<'EOF'
-[Unit]
-Description=Bookmark manager API
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=bookmarks
-Group=bookmarks
-EnvironmentFile=/etc/bookmarks/bookmarkd.env
-ExecStart=/usr/local/bin/bookmarkd
-Restart=on-failure
-RestartSec=2s
-WorkingDirectory=/var/lib/bookmarks
-
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/bookmarks
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo tee "/etc/nginx/sites-available/$DOMAIN" >/dev/null <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
-        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\\$scheme;
-    }
-}
-EOF
-
-sudo ln -sf "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-enabled/$DOMAIN"
-sudo nginx -t
-sudo systemctl reload nginx
-sudo systemctl daemon-reload
-sudo systemctl enable bookmarkd
+cp .env.deploy.example .env.deploy
+$EDITOR .env.deploy
+make update
 ```
+
+Optional variables:
+
+```sh
+BOOKMARKS_DEPLOY_SERVICE=bookmarkd
+BOOKMARKS_DEPLOY_TARGET=/usr/local/bin/bookmarkd
+BOOKMARKS_DEPLOY_USER=root
+```
+
+The `make update` workflow:
+
+- Runs local tests and builds the server binary.
+- Copies the Linux binary to the VPS under `/tmp`.
+- Runs `/usr/local/sbin/bookmarks-backup` if the production database exists.
+- Preserves the current binary as `/usr/local/bin/bookmarkd.previous`.
+- Installs the new binary at `/usr/local/bin/bookmarkd`.
+- Restarts `bookmarkd` through systemd.
+- Verifies the public health endpoint with unauthenticated `GET /healthz`.
+
+If the database exists and the backup script is missing or fails, deployment
+stops before the binary is replaced.
+
+Future hardening: create a sudo-capable deploy user and set
+`BOOKMARKS_DEPLOY_USER` to that user instead of using direct root SSH.
+
+## Debian Bootstrap Script
+
+`scripts/bootstrap-debian.sh` runs once on a Debian VPS. Copy it to the VPS and
+run it as root there:
+
+```sh
+scp scripts/bootstrap-debian.sh root@bookmarks.example.com:/root/bootstrap-debian.sh
+ssh root@bookmarks.example.com
+
+export BOOKMARKS_DOMAIN=bookmarks.example.com
+export BOOKMARKS_TOKEN=<token>
+sh /root/bootstrap-debian.sh
+```
+
+The bootstrap script installs `nginx` and `sqlite3`, creates the `bookmarks`
+service user, creates `/var/lib/bookmarks`, writes `/etc/bookmarks/bookmarkd.env`,
+installs the systemd unit, installs the nginx site, installs
+`/usr/local/sbin/bookmarks-backup`, and enables the daily backup timer.
 
 This script intentionally does not install TLS. For Debian/nginx, certbot or an
 existing ACME workflow should own certificate issuance and renewal.
 
-## Proposed Health Checks
+## Deployment Checklist
 
-The app currently has authenticated API endpoints. For deployment verification,
-the deploy script can use the existing list endpoint:
+One-time setup:
+
+1. Point DNS for `BOOKMARKS_DOMAIN` at the VPS.
+2. Generate a token with `openssl rand -hex 32`.
+3. Copy `.env.deploy.example` to `.env.deploy` and fill in the real domain and
+   SSH target.
+4. Copy `scripts/bootstrap-debian.sh` to the VPS and run it as root with
+   `BOOKMARKS_DOMAIN` and `BOOKMARKS_TOKEN` set.
+5. Run `make update` locally to install the first `bookmarkd` binary.
+6. Configure TLS for `BOOKMARKS_DOMAIN`.
+7. Set `BOOKMARKS_URL := https://...` in `.env.deploy` if it is not already set.
+8. Run `make update` again and confirm `/healthz` verification succeeds over
+   HTTPS.
+
+Normal update:
+
+1. Make code changes locally.
+2. Run `make update`.
+3. If verification fails after restart, run `make rollback`.
+
+## Health Check
+
+The app exposes a public liveness endpoint for deployment verification:
 
 ```sh
-curl -fsS \
-  -H "Authorization: Bearer $BOOKMARKS_TOKEN" \
-  "$BOOKMARKS_URL/api/bookmarks" >/dev/null
+curl -fsS "$BOOKMARKS_URL/healthz"
 ```
 
-Later, a `GET /healthz` endpoint could simplify system checks. It should return
-only process/database health and should not expose bookmark data.
+Expected response:
 
-Possible behavior:
-
-```text
-GET /healthz -> 200 OK
+```json
+{"status":"ok"}
 ```
 
-If public and unauthenticated, it should reveal as little as possible. If
-private and authenticated, it can include more diagnostics.
+`GET /healthz` is intentionally unauthenticated and minimal. It should not
+expose bookmark data, version details, hostnames, database paths, uptime,
+configuration, or diagnostics. It is a liveness check for deploy scripts and
+simple monitoring, not an administrative status endpoint.
+
+If richer diagnostics are needed later, add a separate authenticated endpoint
+instead of expanding public `/healthz`.
 
 ## Rollback Plan
 
@@ -367,81 +369,31 @@ sudo systemctl restart bookmarkd
 sudo systemctl status bookmarkd
 ```
 
+From the development machine, the scripted rollback path is:
+
+```sh
+make rollback
+```
+
 Before schema migrations exist, avoid deploying code that changes the database
 shape without a database backup.
 
-## Tickets
+## Ticket Status
 
-1. Document the current VPS deployment.
+1. Done: document the current VPS deployment.
+2. Done: add a local server build target.
+3. Done: add a deploy script for binary updates.
+4. Done: add a one-time Debian VPS bootstrap script.
+5. Done: add deployment verification through `GET /healthz`.
+6. Done: add rollback documentation and `make rollback`.
+7. Deferred to the backup workstream: operational backup validation. The deploy
+   script can call `/usr/local/sbin/bookmarks-backup` when the production
+   database exists, but backup policy and restore verification remain tracked in
+   `docs/backups.md`.
+8. Done: implement `GET /healthz` as an unauthenticated minimal liveness check.
 
-   Acceptance criteria:
+Future hardening:
 
-   - The repo contains a deployment doc with the daemon env vars, systemd unit,
-     nginx proxy shape, and manual verification command.
-   - The doc names the expected data directory and env file paths.
-   - The doc clearly states that `bookmarkd` binds to localhost only.
-
-2. Add a local server build target.
-
-   Acceptance criteria:
-
-   - A Makefile or script can run tests and build a Linux binary for
-     `bookmarkd`.
-   - The build output goes under an ignored `dist/` directory.
-   - The target supports the VPS architecture, either `amd64` or `arm64`.
-   - `bookmarkctl` is not built as part of server deployment.
-
-3. Add a deploy script for binary updates.
-
-   Acceptance criteria:
-
-   - The script copies a built `bookmarkd` binary to the VPS.
-   - The script preserves the previous binary before replacing it.
-   - The script restarts `bookmarkd` through systemd.
-   - The script reports service status after restart.
-   - The script does not print `BOOKMARKS_TOKEN`.
-
-4. Add a one-time VPS bootstrap script.
-
-   Acceptance criteria:
-
-   - The script creates the `bookmarks` service user if missing.
-   - The script creates `/var/lib/bookmarks` and `/etc/bookmarks` with safe
-     ownership and permissions.
-   - The script writes or updates the systemd unit.
-   - The script writes or updates the nginx site.
-   - The script validates nginx config before reload.
-   - TLS setup remains explicit and documented rather than hidden.
-
-5. Add deployment verification.
-
-   Acceptance criteria:
-
-   - The deploy workflow checks the API after restart.
-   - Failed verification returns a non-zero exit code.
-   - The check works with the current authenticated `/api/bookmarks` endpoint.
-
-6. Add rollback documentation.
-
-   Acceptance criteria:
-
-   - The doc explains where the previous binary is stored.
-   - The doc includes the exact rollback commands.
-   - The deploy script and rollback doc agree on file paths.
-
-7. Add database backup preflight.
-
-   Acceptance criteria:
-
-   - The deploy workflow either creates a SQLite backup before restart or
-     explicitly calls a backup script.
-   - Backup failures stop deployment.
-   - The backup file name includes a timestamp.
-
-8. Consider a health endpoint.
-
-   Acceptance criteria:
-
-   - Decide whether `GET /healthz` should be authenticated.
-   - If implemented, tests cover success and database failure behavior.
-   - Deployment verification can use `/healthz` without exposing bookmark data.
+- Migrate deployment from root SSH to a sudo-capable deploy user.
+- Decide whether public `/healthz` should remain the only operational endpoint
+  or whether authenticated readiness diagnostics are useful.

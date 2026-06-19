@@ -360,6 +360,42 @@ func TestListBookmarksJSONHandlesStoreError(t *testing.T) {
 	assertJSONContentType(t, rec)
 }
 
+func TestHealthz(t *testing.T) {
+	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertJSONContentType(t, rec)
+
+	var got map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got["status"] != "ok" {
+		t.Fatalf("status field = %q, want ok", got["status"])
+	}
+	if len(got) != 1 {
+		t.Fatalf("response fields = %#v, want only status", got)
+	}
+}
+
+func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
+	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 type fakeStore struct {
 	createBookmark func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
 	listBookmarks  func(context.Context) ([]bookmarks.Bookmark, error)

@@ -16,6 +16,8 @@ This document tracks the next buildouts. Each workstream should stay small enoug
    - Document the current Debian/nginx/systemd setup.
    - Make updates repeatable with as little manual VPS work as possible.
    - Harden service permissions and deployment procedures.
+   - Start with root SSH deployment for simplicity, then migrate to a
+     sudo-capable deploy user.
 
 2. Edit and delete
    - Turn the bookmark API into basic CRUD.
