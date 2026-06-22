@@ -128,7 +128,7 @@ func runList(
 	}
 
 	for _, bookmarkItem := range bookmarkList {
-		fmt.Fprintf(stdout, "%s\t%s\n", bookmarkItem.URL, bookmarkItem.Title)
+		fmt.Fprintf(stdout, "%s\t%s\t%s\n", bookmarkItem.ID, bookmarkItem.URL, bookmarkItem.Title)
 	}
 	return nil
 }

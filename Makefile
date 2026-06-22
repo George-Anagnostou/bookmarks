@@ -28,5 +28,9 @@ update: test build-server
 rollback:
 	./scripts/rollback-bookmarkd.sh
 
+build-cli:
+	mkdir -p $(DIST_DIR)
+	$(GO) install ./cmd/bookmarkctl
+
 clean:
 	rm -rf $(DIST_DIR)

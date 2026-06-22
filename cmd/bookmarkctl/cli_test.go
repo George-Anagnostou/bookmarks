@@ -160,11 +160,13 @@ func TestRunListPrintsBookmarks(t *testing.T) {
 	client := &fakeBookmarkClient{
 		listBookmarks: []bookmarks.Bookmark{
 			{
+				ID:            "bookmark-1",
 				URL:           "https://example.com/a",
 				NormalizedURL: "https://example.com/a",
 				Title:         "Example",
 			},
 			{
+				ID:            "bookmark-2",
 				URL:           "https://example.com/b",
 				NormalizedURL: "https://example.com/b",
 			},
@@ -187,8 +189,8 @@ func TestRunListPrintsBookmarks(t *testing.T) {
 	}
 
 	assertBookmarkRows(t, stdout.String(), [][]string{
-		{"https://example.com/a", "Example"},
-		{"https://example.com/b", ""},
+		{"bookmark-1", "https://example.com/a", "Example"},
+		{"bookmark-2", "https://example.com/b", ""},
 	})
 }
 
