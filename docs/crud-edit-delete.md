@@ -33,23 +33,14 @@ bookmarkctl edit <id> -title "New title"
 bookmarkctl delete <id>
 ```
 
-This avoids ambiguity with URLs and avoids putting encoded URLs into route paths.
-Because the current CLI list output does not show IDs, add a small prerequisite:
+New output:
 
 ```sh
-bookmarkctl list -ids
+bookmarkctl list
 ```
-
-Suggested output:
 
 ```text
 <id>\t<url>\t<title>
-```
-
-The existing `bookmarkctl list` output can remain:
-
-```text
-<url>\t<title>
 ```
 
 ## API Contract
@@ -189,7 +180,8 @@ that are present.
 
 For each present field:
 
-- `URL`: trim original URL, normalize it, update both `url` and `normalized_url`.
+- `URL`: trim surrounding whitespace from the edited URL, normalize it, update
+  both `url` and `normalized_url`.
 - `Title`: update `title`.
 - `Notes`: update `notes`.
 - `Source`: update `source`.
@@ -398,7 +390,7 @@ Add commands:
 ```sh
 bookmarkctl edit <id> [-url URL] [-title TITLE] [-notes NOTES] [-source SOURCE]
 bookmarkctl delete <id>
-bookmarkctl list -ids
+bookmarkctl list
 ```
 
 ### `edit`
@@ -457,12 +449,12 @@ Behavior:
 Do not prompt for confirmation in the first pass. This keeps scripts simple.
 Confirmation can be added later behind an interactive flag if needed.
 
-### `list -ids`
+### `list`
 
 Examples:
 
 ```sh
-bookmarkctl list -ids
+bookmarkctl list
 ```
 
 Output:
@@ -509,10 +501,9 @@ Extend the fake client with update/delete fields.
 - Client delete errors are returned.
 - Successful delete prints `deleted <id>`.
 
-### List ID Tests
+### List Tests
 
-- `bookmarkctl list -ids` prints `id`, `url`, and `title` columns.
-- Existing `bookmarkctl list` behavior still prints `url` and `title` columns.
+- `bookmarkctl list` prints `id`, `url`, and `title` columns.
 
 ## Migration Considerations
 
@@ -588,12 +579,11 @@ Acceptance criteria:
 
 ### Ticket 5: CLI List IDs
 
-Add `bookmarkctl list -ids`.
+Update `bookmarkctl list` to include IDs by default.
 
 Acceptance criteria:
 
-- Default `list` output remains two columns: URL and title.
-- `list -ids` prints three columns: ID, URL, title.
+- `list` prints three columns: ID, URL, title.
 - Tests parse tab-separated output rather than comparing a large raw string.
 
 ### Ticket 6: CLI Edit
@@ -627,11 +617,11 @@ Acceptance criteria:
 
 ```sh
 bookmarkctl add https://example.com/crud-smoke
-bookmarkctl list -ids
+bookmarkctl list
 bookmarkctl edit <id> -title "CRUD smoke"
-bookmarkctl list -ids
+bookmarkctl list
 bookmarkctl delete <id>
-bookmarkctl list -ids
+bookmarkctl list
 ```
 
 The bookmark should be created, edited, visible with the updated title, then

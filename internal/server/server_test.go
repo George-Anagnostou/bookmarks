@@ -399,6 +399,8 @@ func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
 type fakeStore struct {
 	createBookmark func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
 	listBookmarks  func(context.Context) ([]bookmarks.Bookmark, error)
+	updateBookmark func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
+	deleteBookmark func(context.Context, string) error
 }
 
 func (s *fakeStore) CreateBookmark(ctx context.Context, input bookmarks.CreateInput) (bookmarks.Bookmark, bool, error) {
@@ -413,6 +415,20 @@ func (s *fakeStore) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, er
 		panic("unexpected ListBookmarks call")
 	}
 	return s.listBookmarks(ctx)
+}
+
+func (s *fakeStore) UpdateBookmark(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {
+	if s.updateBookmark == nil {
+		panic("unexpected UpdateBookmark call")
+	}
+	return s.updateBookmark(ctx, id, input)
+}
+
+func (s *fakeStore) DeleteBookmark(ctx context.Context, id string) error {
+	if s.deleteBookmark == nil {
+		panic("unexpected DeleteBookmark call")
+	}
+	return s.deleteBookmark(ctx, id)
 }
 
 func newJSONRequest(t *testing.T, method string, path string, body any) *http.Request {

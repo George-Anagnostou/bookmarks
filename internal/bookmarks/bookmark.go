@@ -11,10 +11,14 @@ import (
 )
 
 var (
-	ErrEmptyURL    = errors.New("url is required")
-	ErrUnsupported = errors.New("url must use http or https")
-	ErrMissingHost = errors.New("url host is required")
-	ErrURLUserInfo = errors.New("url must not include credentials")
+	ErrEmptyURL       = errors.New("url is required")
+	ErrUnsupported    = errors.New("url must use http or https")
+	ErrMissingHost    = errors.New("url host is required")
+	ErrURLUserInfo    = errors.New("url must not include credentials")
+	ErrNotFound       = errors.New("bookmark not found")
+	ErrDuplicateURL   = errors.New("bookmark url already exists")
+	ErrNoUpdateFields = errors.New("bookmark edit must update at least one field")
+	ErrNotImplemented = errors.New("not implemented")
 )
 
 type Bookmark struct {
@@ -37,9 +41,18 @@ type CreateInput struct {
 	Source string   `json:"source,omitempty"`
 }
 
+type UpdateInput struct {
+	URL    *string `json:"url,omitempty"`
+	Title  *string `json:"title,omitempty"`
+	Notes  *string `json:"notes,omitempty"`
+	Source *string `json:"source,omitempty"`
+}
+
 type Store interface {
 	CreateBookmark(ctx context.Context, input CreateInput) (Bookmark, bool, error)
 	ListBookmarks(ctx context.Context) ([]Bookmark, error)
+	UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error)
+	DeleteBookmark(ctx context.Context, id string) error
 }
 
 func NormalizeURL(raw string) (string, error) {

@@ -168,6 +168,11 @@ func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
 	return bookmarks, nil
 }
 
+func (s *SQLStore) UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error) {
+	return Bookmark{}, ErrNotImplemented
+}
+func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error { return ErrNotImplemented }
+
 func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL string) (Bookmark, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
