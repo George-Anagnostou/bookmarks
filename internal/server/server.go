@@ -26,16 +26,20 @@ type createBookmarkResponse struct {
 	Created  bool               `json:"created"`
 }
 
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
 type listBookmarksResponse struct {
 	Bookmarks []bookmarks.Bookmark `json:"bookmarks"`
 }
 
-// Cap create request bodies at 64KB
-const maxCreateBookmarkBodyBytes = 64 * 1024
+type updateBookmarkResponse struct {
+	Bookmark bookmarks.Bookmark `json:"bookmark"`
+}
+
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+// Cap request bodies at 64KB
+const maxBookmarkBodyBytes = 64 * 1024
 
 // New creates a server and panics if required config is missing.
 func New(cfg Config) *Server {
@@ -57,13 +61,15 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/bookmarks", s.requireAuth(s.handleCreateBookmark))
 	mux.HandleFunc("GET /api/bookmarks", s.requireAuth(s.handleListBookmarksJSON))
+	mux.HandleFunc("PATCH /api/bookmarks/{id}", s.requireAuth(s.handleUpdateBookmark))
+	mux.HandleFunc("DELETE /api/bookmarks/{id}", s.requireAuth(s.handleDeleteBookmark))
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux
 }
 
 func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 	var input bookmarks.CreateInput
-	if err := decodeJSON(w, r, &input, maxCreateBookmarkBodyBytes); err != nil {
+	if err := decodeJSON(w, r, &input, maxBookmarkBodyBytes); err != nil {
 		if errors.As(err, new(*http.MaxBytesError)) {
 			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
 			return
@@ -112,6 +118,63 @@ func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, listBookmarksResponse{
 		Bookmarks: bookmarksList,
 	})
+}
+
+func (s *Server) handleUpdateBookmark(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var input bookmarks.UpdateInput
+	if err := decodeJSON(w, r, &input, maxBookmarkBodyBytes); err != nil {
+		if errors.As(err, new(*http.MaxBytesError)) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "bad request"})
+		return
+	}
+
+	updatedBookmark, err := s.store.UpdateBookmark(r.Context(), id, input)
+	if err != nil {
+		switch {
+		case errors.Is(err, bookmarks.ErrEmptyURL),
+			errors.Is(err, bookmarks.ErrUnsupported),
+			errors.Is(err, bookmarks.ErrMissingHost),
+			errors.Is(err, bookmarks.ErrURLUserInfo),
+			errors.Is(err, bookmarks.ErrNoUpdateFields):
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "bad request"})
+			return
+		case errors.Is(err, bookmarks.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		case errors.Is(err, bookmarks.ErrDuplicateURL):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "conflict"})
+			return
+		default:
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, updateBookmarkResponse{
+		Bookmark: updatedBookmark,
+	})
+}
+
+func (s *Server) handleDeleteBookmark(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	err := s.store.DeleteBookmark(r.Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, bookmarks.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "not found"})
+			return
+		default:
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

@@ -176,7 +176,7 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 		{
 			name:       "oversized body",
 			method:     http.MethodPost,
-			body:       `{"url":"https://example.com/a","notes":"` + strings.Repeat("x", maxCreateBookmarkBodyBytes) + `"}`,
+			body:       `{"url":"https://example.com/a","notes":"` + strings.Repeat("x", maxBookmarkBodyBytes) + `"}`,
 			wantStatus: http.StatusRequestEntityTooLarge,
 		},
 		{
@@ -364,8 +364,8 @@ func TestUpdateBookmark(t *testing.T) {
 	now := time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC)
 	bookmark := bookmarks.Bookmark{
 		ID:            "bookmark-1",
-		URL:           "https://example.com/a",
-		NormalizedURL: "https://example.com/a",
+		URL:           "https://example.com/new",
+		NormalizedURL: "https://example.com/new",
 		Title:         "Updated",
 		Notes:         "",
 		Source:        "bookmarkctl",
@@ -387,8 +387,8 @@ func TestUpdateBookmark(t *testing.T) {
 			if input.Source == nil || *input.Source != "bookmarkctl" {
 				t.Fatalf("Source = %#v, want bookmarkctl", input.Source)
 			}
-			if input.URL != nil {
-				t.Fatalf("URL = %#v, want nil", input.URL)
+			if input.URL == nil || *input.URL != "https://example.com/new" {
+				t.Fatalf("URL = %#v, want https://example.com/new", input.URL)
 			}
 			return bookmark, nil
 		},
@@ -396,6 +396,7 @@ func TestUpdateBookmark(t *testing.T) {
 
 	handler := New(Config{Store: store, Token: "test-token"}).Handler()
 	req := newJSONRequest(t, http.MethodPatch, "/api/bookmarks/bookmark-1", map[string]string{
+		"url":    "https://example.com/new",
 		"title":  "Updated",
 		"notes":  "",
 		"source": "bookmarkctl",
@@ -482,7 +483,7 @@ func TestUpdateBookmarkRejectsBadRequests(t *testing.T) {
 		{
 			name:       "oversized body",
 			method:     http.MethodPatch,
-			body:       `{"notes":"` + strings.Repeat("x", maxCreateBookmarkBodyBytes) + `"}`,
+			body:       `{"notes":"` + strings.Repeat("x", maxBookmarkBodyBytes) + `"}`,
 			wantStatus: http.StatusRequestEntityTooLarge,
 		},
 		{

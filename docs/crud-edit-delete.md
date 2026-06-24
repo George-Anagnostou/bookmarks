@@ -297,10 +297,8 @@ Reuse the JSON helpers already in the server package.
 Suggested request body limit:
 
 ```go
-const maxUpdateBookmarkBodyBytes = 64 * 1024
+const maxBookmarkBodyBytes = 64 * 1024
 ```
-
-It can start equal to `maxCreateBookmarkBodyBytes`.
 
 ### Server Error Mapping
 
