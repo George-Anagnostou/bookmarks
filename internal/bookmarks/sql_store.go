@@ -171,7 +171,27 @@ func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
 func (s *SQLStore) UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error) {
 	return Bookmark{}, ErrNotImplemented
 }
-func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error { return ErrNotImplemented }
+
+func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE
+		FROM bookmarks
+		WHERE id = ?
+		`, id)
+	if err != nil {
+		return fmt.Errorf("delete bookmark: %w", err)
+	}
+
+	numRows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete bookmark: %w", err)
+	}
+
+	if numRows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
 
 func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL string) (Bookmark, error) {
 	row := s.db.QueryRowContext(ctx, `
