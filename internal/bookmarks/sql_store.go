@@ -3,13 +3,15 @@ package bookmarks
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const schemaSQL = `
@@ -169,7 +171,71 @@ func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
 }
 
 func (s *SQLStore) UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error) {
-	return Bookmark{}, ErrNotImplemented
+	var sets []string
+	var args []any
+
+	if input.URL != nil {
+		rawURL := strings.TrimSpace(*input.URL)
+
+		normalizedURL, err := NormalizeURL(rawURL)
+		if err != nil {
+			return Bookmark{}, err
+		}
+
+		sets = append(sets, "url = ?", "normalized_url = ?")
+		args = append(args, rawURL, normalizedURL)
+	}
+
+	if input.Title != nil {
+		sets = append(sets, "title = ?")
+		args = append(args, *input.Title)
+	}
+
+	if input.Notes != nil {
+		sets = append(sets, "notes = ?")
+		args = append(args, *input.Notes)
+	}
+
+	if input.Source != nil {
+		sets = append(sets, "source = ?")
+		args = append(args, *input.Source)
+	}
+
+	if len(sets) == 0 {
+		return Bookmark{}, ErrNoUpdateFields
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	sets = append(sets, "updated_at = ?")
+	args = append(args, now.Format(time.RFC3339))
+
+	args = append(args, id)
+
+	query := `
+		UPDATE bookmarks
+		SET ` + strings.Join(sets, ", ") + `
+		WHERE id = ?
+		RETURNING id, url, normalized_url, title, notes, source, created_at, updated_at
+	`
+
+	row := s.db.QueryRowContext(ctx, query, args...)
+
+	bookmark, err := scanBookmark(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Bookmark{}, ErrNotFound
+	}
+
+	// Map normalized_url unique constraint violations to domain duplicate error
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		return Bookmark{}, ErrDuplicateURL
+	}
+
+	if err != nil {
+		return Bookmark{}, fmt.Errorf("update bookmark: %w", err)
+	}
+
+	return bookmark, nil
 }
 
 func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error {

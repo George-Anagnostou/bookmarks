@@ -18,7 +18,6 @@ var (
 	ErrNotFound       = errors.New("bookmark not found")
 	ErrDuplicateURL   = errors.New("bookmark url already exists")
 	ErrNoUpdateFields = errors.New("bookmark edit must update at least one field")
-	ErrNotImplemented = errors.New("not implemented")
 )
 
 type Bookmark struct {
