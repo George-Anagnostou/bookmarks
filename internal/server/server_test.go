@@ -360,6 +360,321 @@ func TestListBookmarksJSONHandlesStoreError(t *testing.T) {
 	assertJSONContentType(t, rec)
 }
 
+func TestUpdateBookmark(t *testing.T) {
+	now := time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC)
+	bookmark := bookmarks.Bookmark{
+		ID:            "bookmark-1",
+		URL:           "https://example.com/a",
+		NormalizedURL: "https://example.com/a",
+		Title:         "Updated",
+		Notes:         "",
+		Source:        "bookmarkctl",
+		CreatedAt:     now.Add(-time.Hour),
+		UpdatedAt:     now,
+	}
+
+	store := &fakeStore{
+		updateBookmark: func(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {
+			if id != "bookmark-1" {
+				t.Fatalf("id = %q, want %q", id, "bookmark-1")
+			}
+			if input.Title == nil || *input.Title != "Updated" {
+				t.Fatalf("Title = %#v, want Updated", input.Title)
+			}
+			if input.Notes == nil || *input.Notes != "" {
+				t.Fatalf("Notes = %#v, want empty string pointer", input.Notes)
+			}
+			if input.Source == nil || *input.Source != "bookmarkctl" {
+				t.Fatalf("Source = %#v, want bookmarkctl", input.Source)
+			}
+			if input.URL != nil {
+				t.Fatalf("URL = %#v, want nil", input.URL)
+			}
+			return bookmark, nil
+		},
+	}
+
+	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	req := newJSONRequest(t, http.MethodPatch, "/api/bookmarks/bookmark-1", map[string]string{
+		"title":  "Updated",
+		"notes":  "",
+		"source": "bookmarkctl",
+	})
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertJSONContentType(t, rec)
+
+	var got struct {
+		Bookmark bookmarks.Bookmark `json:"bookmark"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !reflect.DeepEqual(got.Bookmark, bookmark) {
+		t.Fatalf("bookmark = %#v, want %#v", got.Bookmark, bookmark)
+	}
+}
+
+func TestUpdateBookmarkRequiresBearerToken(t *testing.T) {
+	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+
+	tests := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing"},
+		{name: "wrong token", authorization: "Bearer wrong-token"},
+		{name: "wrong scheme", authorization: "Basic test-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := newJSONRequest(t, http.MethodPatch, "/api/bookmarks/bookmark-1", map[string]string{
+				"title": "Updated",
+			})
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+			}
+			assertJSONContentType(t, rec)
+		})
+	}
+}
+
+func TestUpdateBookmarkRejectsBadRequests(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		storeError error
+		wantStatus int
+	}{
+		{
+			name:       "wrong method",
+			method:     http.MethodPut,
+			body:       `{"title":"Updated"}`,
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "bad json",
+			method:     http.MethodPatch,
+			body:       `{"title":`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "trailing json",
+			method:     http.MethodPatch,
+			body:       `{"title":"Updated"} {}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "oversized body",
+			method:     http.MethodPatch,
+			body:       `{"notes":"` + strings.Repeat("x", maxCreateBookmarkBodyBytes) + `"}`,
+			wantStatus: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name:       "empty update",
+			method:     http.MethodPatch,
+			body:       `{}`,
+			storeError: bookmarks.ErrNoUpdateFields,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "empty url",
+			method:     http.MethodPatch,
+			body:       `{"url":""}`,
+			storeError: bookmarks.ErrEmptyURL,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "unsupported url",
+			method:     http.MethodPatch,
+			body:       `{"url":"ftp://example.com/file"}`,
+			storeError: bookmarks.ErrUnsupported,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "missing host",
+			method:     http.MethodPatch,
+			body:       `{"url":"https:///path"}`,
+			storeError: bookmarks.ErrMissingHost,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "url user info",
+			method:     http.MethodPatch,
+			body:       `{"url":"https://user@example.com/a"}`,
+			storeError: bookmarks.ErrURLUserInfo,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			method:     http.MethodPatch,
+			body:       `{"title":"Updated"}`,
+			storeError: bookmarks.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "duplicate url",
+			method:     http.MethodPatch,
+			body:       `{"url":"https://example.com/a"}`,
+			storeError: bookmarks.ErrDuplicateURL,
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "store failure",
+			method:     http.MethodPatch,
+			body:       `{"title":"Updated"}`,
+			storeError: errors.New("database unavailable"),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{}
+			if tt.storeError != nil {
+				store.updateBookmark = func(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {
+					if id != "bookmark-1" {
+						t.Fatalf("id = %q, want %q", id, "bookmark-1")
+					}
+					return bookmarks.Bookmark{}, tt.storeError
+				}
+			}
+
+			handler := New(Config{Store: store, Token: "test-token"}).Handler()
+			req := httptest.NewRequest(tt.method, "/api/bookmarks/bookmark-1", bytes.NewBufferString(tt.body))
+			req.Header.Set("Authorization", "Bearer test-token")
+			req.Header.Set("Content-Type", "application/json")
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if rec.Code != http.StatusMethodNotAllowed {
+				assertJSONContentType(t, rec)
+			}
+		})
+	}
+}
+
+func TestDeleteBookmark(t *testing.T) {
+	store := &fakeStore{
+		deleteBookmark: func(ctx context.Context, id string) error {
+			if id != "bookmark-1" {
+				t.Fatalf("id = %q, want %q", id, "bookmark-1")
+			}
+			return nil
+		},
+	}
+
+	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodDelete, "/api/bookmarks/bookmark-1", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("body = %q, want empty", rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "" {
+		t.Fatalf("Content-Type = %q, want empty", got)
+	}
+}
+
+func TestDeleteBookmarkRequiresBearerToken(t *testing.T) {
+	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+
+	tests := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing"},
+		{name: "wrong token", authorization: "Bearer wrong-token"},
+		{name: "wrong scheme", authorization: "Basic test-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodDelete, "/api/bookmarks/bookmark-1", nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+			}
+			assertJSONContentType(t, rec)
+		})
+	}
+}
+
+func TestDeleteBookmarkHandlesStoreErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		storeError error
+		wantStatus int
+	}{
+		{
+			name:       "not found",
+			storeError: bookmarks.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "store failure",
+			storeError: errors.New("database unavailable"),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{
+				deleteBookmark: func(ctx context.Context, id string) error {
+					if id != "bookmark-1" {
+						t.Fatalf("id = %q, want %q", id, "bookmark-1")
+					}
+					return tt.storeError
+				},
+			}
+
+			handler := New(Config{Store: store, Token: "test-token"}).Handler()
+			req := httptest.NewRequest(http.MethodDelete, "/api/bookmarks/bookmark-1", nil)
+			req.Header.Set("Authorization", "Bearer test-token")
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			assertJSONContentType(t, rec)
+		})
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
