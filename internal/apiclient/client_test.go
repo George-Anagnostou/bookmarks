@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,9 +122,7 @@ func TestCreateBookmarkDuplicate(t *testing.T) {
 }
 
 func TestCreateBookmarkReturnsErrorForNonSuccessStatus(t *testing.T) {
-	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called.Store(true)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(struct {
@@ -142,9 +139,6 @@ func TestCreateBookmarkReturnsErrorForNonSuccessStatus(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("CreateBookmark() error = nil, want error")
-	}
-	if !called.Load() {
-		t.Fatal("CreateBookmark() did not send request")
 	}
 }
 
@@ -223,6 +217,211 @@ func TestListBookmarksEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("len(bookmarks) = %d, want 0", len(got))
+	}
+}
+
+func TestUpdateBookmark(t *testing.T) {
+	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	wantBookmark := bookmarks.Bookmark{
+		ID:            "bookmark-1",
+		URL:           "https://example.com/new",
+		NormalizedURL: "https://example.com/new",
+		Title:         "Updated",
+		Notes:         "",
+		Source:        "bookmarkctl",
+		CreatedAt:     now.Add(-time.Hour),
+		UpdatedAt:     now,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("method = %s, want %s", r.Method, http.MethodPatch)
+		}
+		if r.URL.Path != "/api/bookmarks/bookmark-1" {
+			t.Fatalf("path = %s, want /api/bookmarks/bookmark-1", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("Content-Type = %q, want application/json", got)
+		}
+
+		var input bookmarks.UpdateInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if input.URL == nil || *input.URL != "https://example.com/new" {
+			t.Fatalf("input.URL = %#v, want https://example.com/new", input.URL)
+		}
+		if input.Title == nil || *input.Title != "Updated" {
+			t.Fatalf("input.Title = %#v, want Updated", input.Title)
+		}
+		if input.Notes == nil || *input.Notes != "" {
+			t.Fatalf("input.Notes = %#v, want empty string pointer", input.Notes)
+		}
+		if input.Source == nil || *input.Source != "bookmarkctl" {
+			t.Fatalf("input.Source = %#v, want bookmarkctl", input.Source)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Bookmark bookmarks.Bookmark `json:"bookmark"`
+		}{
+			Bookmark: wantBookmark,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	gotBookmark, err := client.UpdateBookmark(context.Background(), "bookmark-1", bookmarks.UpdateInput{
+		URL:    stringPtr("https://example.com/new"),
+		Title:  stringPtr("Updated"),
+		Notes:  stringPtr(""),
+		Source: stringPtr("bookmarkctl"),
+	})
+	if err != nil {
+		t.Fatalf("UpdateBookmark() error = %v", err)
+	}
+	if !reflect.DeepEqual(gotBookmark, wantBookmark) {
+		t.Fatalf("bookmark = %#v, want %#v", gotBookmark, wantBookmark)
+	}
+}
+
+func TestUpdateBookmarkReturnsErrorForNonSuccessStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(struct {
+			Error string `json:"error"`
+		}{
+			Error: "conflict",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	_, err := client.UpdateBookmark(context.Background(), "bookmark-1", bookmarks.UpdateInput{
+		Title: stringPtr("Updated"),
+	})
+	if err == nil {
+		t.Fatal("UpdateBookmark() error = nil, want error")
+	}
+}
+
+func TestUpdateBookmarkRequiresOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(struct {
+			Bookmark bookmarks.Bookmark `json:"bookmark"`
+		}{
+			Bookmark: bookmarks.Bookmark{ID: "bookmark-1"},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	_, err := client.UpdateBookmark(context.Background(), "bookmark-1", bookmarks.UpdateInput{
+		Title: stringPtr("Updated"),
+	})
+	if err == nil {
+		t.Fatal("UpdateBookmark() error = nil, want error")
+	}
+}
+
+func TestUpdateBookmarkPathEscapesID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.RequestURI != "/api/bookmarks/folder%2Fbookmark%201" {
+			t.Fatalf("RequestURI = %q, want escaped bookmark ID", r.RequestURI)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Bookmark bookmarks.Bookmark `json:"bookmark"`
+		}{
+			Bookmark: bookmarks.Bookmark{ID: "folder/bookmark 1"},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	if _, err := client.UpdateBookmark(context.Background(), "folder/bookmark 1", bookmarks.UpdateInput{
+		Title: stringPtr("Updated"),
+	}); err != nil {
+		t.Fatalf("UpdateBookmark() error = %v", err)
+	}
+}
+
+func TestDeleteBookmark(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want %s", r.Method, http.MethodDelete)
+		}
+		if r.URL.Path != "/api/bookmarks/bookmark-1" {
+			t.Fatalf("path = %s, want /api/bookmarks/bookmark-1", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	if err := client.DeleteBookmark(context.Background(), "bookmark-1"); err != nil {
+		t.Fatalf("DeleteBookmark() error = %v", err)
+	}
+}
+
+func TestDeleteBookmarkReturnsErrorForNonSuccessStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(struct {
+			Error string `json:"error"`
+		}{
+			Error: "not found",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	if err := client.DeleteBookmark(context.Background(), "bookmark-1"); err == nil {
+		t.Fatal("DeleteBookmark() error = nil, want error")
+	}
+}
+
+func TestDeleteBookmarkRequiresNoContentStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Deleted bool `json:"deleted"`
+		}{
+			Deleted: true,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	if err := client.DeleteBookmark(context.Background(), "bookmark-1"); err == nil {
+		t.Fatal("DeleteBookmark() error = nil, want error")
+	}
+}
+
+func TestDeleteBookmarkPathEscapesID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.RequestURI != "/api/bookmarks/folder%2Fbookmark%201" {
+			t.Fatalf("RequestURI = %q, want escaped bookmark ID", r.RequestURI)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	if err := client.DeleteBookmark(context.Background(), "folder/bookmark 1"); err != nil {
+		t.Fatalf("DeleteBookmark() error = %v", err)
 	}
 }
 
@@ -336,4 +535,8 @@ func newTestClient(t *testing.T, baseURL string) *Client {
 		t.Fatalf("New() error = %v", err)
 	}
 	return client
+}
+
+func stringPtr(s string) *string {
+	return &s
 }

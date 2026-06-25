@@ -129,3 +129,76 @@ func (c *Client) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error
 
 	return out.Bookmarks, nil
 }
+
+func (c *Client) UpdateBookmark(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {
+	urlPath, err := c.bookmarkURL(id)
+	if err != nil {
+		return bookmarks.Bookmark{}, err
+	}
+
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(input); err != nil {
+		return bookmarks.Bookmark{}, fmt.Errorf("encode request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, urlPath, &body)
+	if err != nil {
+		return bookmarks.Bookmark{}, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return bookmarks.Bookmark{}, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return bookmarks.Bookmark{}, fmt.Errorf("bookmarks api: %s", resp.Status)
+	}
+
+	var out struct {
+		Bookmark bookmarks.Bookmark `json:"bookmark"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return bookmarks.Bookmark{}, fmt.Errorf("decode response: %w", err)
+	}
+
+	return out.Bookmark, nil
+}
+
+func (c *Client) DeleteBookmark(ctx context.Context, id string) error {
+	urlPath, err := c.bookmarkURL(id)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, urlPath, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("bookmarks api: %s", resp.Status)
+	}
+
+	return nil
+}
+
+func (c *Client) bookmarkURL(id string) (string, error) {
+	u, err := url.JoinPath(c.baseURL, "/api/bookmarks/", url.PathEscape(id))
+	if err != nil {
+		return "", fmt.Errorf("build bookmark url: %w", err)
+	}
+	return u, nil
+}
