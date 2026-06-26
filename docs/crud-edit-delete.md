@@ -386,10 +386,14 @@ Use `httptest.Server`, following existing `internal/apiclient` tests.
 Add commands:
 
 ```sh
+bookmarkctl add <url> [-title TITLE] [-notes NOTES]
 bookmarkctl edit <id> [-url URL] [-title TITLE] [-notes NOTES] [-source SOURCE]
 bookmarkctl delete <id>
 bookmarkctl list
 ```
+
+`add` is URL-first. `edit` and `delete` are ID-first because they operate on an
+existing bookmark selected from `bookmarkctl list`.
 
 ### `edit`
 

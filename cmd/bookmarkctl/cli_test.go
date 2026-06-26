@@ -67,7 +67,7 @@ func TestRunAddCreatesBookmark(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"add", "-title", "Example", "-notes", "Read later", "https://example.com/a"},
+		[]string{"add", "https://example.com/a", "-title", "Example", "-notes", "Read later"},
 		mapLookup(map[string]string{
 			"BOOKMARKS_URL":   "http://localhost:8080",
 			"BOOKMARKS_TOKEN": "test-token",
@@ -236,6 +236,261 @@ func TestRunReturnsListErrors(t *testing.T) {
 	}
 }
 
+func TestRunEditUpdatesBookmark(t *testing.T) {
+	client := &fakeBookmarkClient{
+		updateBookmark: bookmarks.Bookmark{
+			ID:  "bookmark-1",
+			URL: "https://example.com/new",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"edit", "bookmark-1", "-url", "https://example.com/new", "-title", "Updated", "-notes", "", "-source", "bookmarkctl"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	if !client.updateCalled {
+		t.Fatal("UpdateBookmark was not called")
+	}
+	if client.updateID != "bookmark-1" {
+		t.Fatalf("update ID = %q, want bookmark-1", client.updateID)
+	}
+	assertStringPtr(t, "URL", client.updateInput.URL, "https://example.com/new")
+	assertStringPtr(t, "Title", client.updateInput.Title, "Updated")
+	assertStringPtr(t, "Notes", client.updateInput.Notes, "")
+	assertStringPtr(t, "Source", client.updateInput.Source, "bookmarkctl")
+
+	if got := stdout.String(); got != "updated bookmark-1 https://example.com/new\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestRunEditCanClearFields(t *testing.T) {
+	client := &fakeBookmarkClient{
+		updateBookmark: bookmarks.Bookmark{
+			ID:  "bookmark-1",
+			URL: "https://example.com/a",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"edit", "bookmark-1", "-title", "", "-notes", ""},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	assertStringPtr(t, "Title", client.updateInput.Title, "")
+	assertStringPtr(t, "Notes", client.updateInput.Notes, "")
+	if client.updateInput.URL != nil {
+		t.Fatalf("URL = %#v, want nil", client.updateInput.URL)
+	}
+	if client.updateInput.Source != nil {
+		t.Fatalf("Source = %#v, want nil", client.updateInput.Source)
+	}
+}
+
+func TestRunEditRejectsBadArgsBeforeCreatingClient(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "missing id",
+			args: []string{"edit"},
+		},
+		{
+			name: "extra arg",
+			args: []string{"edit", "bookmark-1", "extra", "-title", "Updated"},
+		},
+		{
+			name: "no update flags",
+			args: []string{"edit", "bookmark-1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(
+				context.Background(),
+				tt.args,
+				validLookup(),
+				&stdout,
+				&stderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+			if err == nil {
+				t.Fatal("run() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestRunEditReturnsClientErrors(t *testing.T) {
+	client := &fakeBookmarkClient{
+		updateErr: errors.New("boom"),
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"edit", "bookmark-1", "-title", "Updated"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err == nil {
+		t.Fatal("run() error = nil, want error")
+	}
+}
+
+func TestRunDeleteDeletesBookmark(t *testing.T) {
+	client := &fakeBookmarkClient{}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"delete", "bookmark-1"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	if !client.deleteCalled {
+		t.Fatal("DeleteBookmark was not called")
+	}
+	if client.deleteID != "bookmark-1" {
+		t.Fatalf("delete ID = %q, want bookmark-1", client.deleteID)
+	}
+	if got := stdout.String(); got != "deleted bookmark-1\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestRunDeleteRejectsBadArgsBeforeCreatingClient(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "missing id",
+			args: []string{"delete"},
+		},
+		{
+			name: "extra arg",
+			args: []string{"delete", "bookmark-1", "extra"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(
+				context.Background(),
+				tt.args,
+				validLookup(),
+				&stdout,
+				&stderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+			if err == nil {
+				t.Fatal("run() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestRunDeleteReturnsClientErrors(t *testing.T) {
+	client := &fakeBookmarkClient{
+		deleteErr: errors.New("boom"),
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"delete", "bookmark-1"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err == nil {
+		t.Fatal("run() error = nil, want error")
+	}
+}
+
+func TestRunEditReturnsNewClientErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"edit", "bookmark-1", "-title", "Updated"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return nil, errors.New("boom")
+		},
+	)
+	if err == nil {
+		t.Fatal("run() error = nil, want error")
+	}
+}
+
+func TestRunDeleteReturnsNewClientErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"delete", "bookmark-1"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return nil, errors.New("boom")
+		},
+	)
+	if err == nil {
+		t.Fatal("run() error = nil, want error")
+	}
+}
+
 func TestRunReturnsNewClientErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -251,6 +506,17 @@ func TestRunReturnsNewClientErrors(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("run() error = nil, want error")
+	}
+}
+
+func assertStringPtr(t *testing.T, name string, got *string, want string) {
+	t.Helper()
+
+	if got == nil {
+		t.Fatalf("%s = nil, want %q", name, want)
+	}
+	if *got != want {
+		t.Fatalf("%s = %q, want %q", name, *got, want)
 	}
 }
 
@@ -287,6 +553,16 @@ type fakeBookmarkClient struct {
 
 	listBookmarks []bookmarks.Bookmark
 	listErr       error
+
+	updateCalled   bool
+	updateID       string
+	updateInput    bookmarks.UpdateInput
+	updateBookmark bookmarks.Bookmark
+	updateErr      error
+
+	deleteCalled bool
+	deleteID     string
+	deleteErr    error
 }
 
 func (f *fakeBookmarkClient) CreateBookmark(ctx context.Context, input bookmarks.CreateInput) (bookmarks.Bookmark, bool, error) {
@@ -297,4 +573,17 @@ func (f *fakeBookmarkClient) CreateBookmark(ctx context.Context, input bookmarks
 
 func (f *fakeBookmarkClient) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error) {
 	return f.listBookmarks, f.listErr
+}
+
+func (f *fakeBookmarkClient) UpdateBookmark(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {
+	f.updateCalled = true
+	f.updateID = id
+	f.updateInput = input
+	return f.updateBookmark, f.updateErr
+}
+
+func (f *fakeBookmarkClient) DeleteBookmark(ctx context.Context, id string) error {
+	f.deleteCalled = true
+	f.deleteID = id
+	return f.deleteErr
 }

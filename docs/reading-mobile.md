@@ -20,7 +20,7 @@ Implemented today:
 - `POST /api/bookmarks` saves bookmarks.
 - `GET /api/bookmarks` returns all bookmarks as JSON.
 - `bookmarkctl add` creates bookmarks.
-- `bookmarkctl list` prints tab-separated `url title` rows.
+- `bookmarkctl list` prints tab-separated `id url title` rows.
 - Auth is a single bearer token.
 
 Current gaps:
