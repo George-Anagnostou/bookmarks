@@ -13,7 +13,7 @@ export BOOKMARKS_DEPLOY_USER
 export BOOKMARKS_DOMAIN
 export BOOKMARKS_URL
 
-.PHONY: test build-server update rollback clean
+.PHONY: test build-server build-cli update rollback clean
 
 test:
 	$(GO) test ./...
@@ -22,7 +22,7 @@ build-server:
 	mkdir -p $(DIST_DIR)
 	GOOS=$(SERVER_GOOS) GOARCH=$(SERVER_GOARCH) $(GO) build -trimpath -o $(SERVER_BIN) ./cmd/bookmarkd
 
-update: test build-server
+update: test build-cli build-server
 	./scripts/deploy-bookmarkd.sh $(SERVER_BIN)
 
 rollback:
@@ -30,7 +30,7 @@ rollback:
 
 build-cli:
 	mkdir -p $(DIST_DIR)
-	$(GO) install ./cmd/bookmarkctl
+	$(GO) install -trimpath ./cmd/bookmarkctl
 
 clean:
 	rm -rf $(DIST_DIR)

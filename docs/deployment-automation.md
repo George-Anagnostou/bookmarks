@@ -208,9 +208,10 @@ the development machine:
 make update
 ```
 
-That command runs tests, builds the Linux `bookmarkd` binary, copies it to the
-VPS, creates a database backup if the production database exists, preserves the
-previous binary, restarts the systemd service, and verifies public `/healthz`.
+That command runs tests, rebuilds the local `bookmarkctl` CLI, builds the Linux
+`bookmarkd` binary, copies it to the VPS, creates a database backup if the
+production database exists, preserves the previous binary, restarts the systemd
+service, and verifies public `/healthz`.
 
 Rollback is also one command:
 
@@ -220,10 +221,11 @@ make rollback
 
 ## Local Build Targets
 
-Server builds are handled by the root `Makefile`:
+Builds are handled by the root `Makefile`:
 
 ```sh
 make test
+make build-cli
 make build-server
 make update
 make rollback
@@ -241,15 +243,15 @@ For an ARM VPS, override the architecture:
 make build-server SERVER_GOARCH=arm64
 ```
 
-The `bookmarkctl` CLI is intentionally not part of server deployment. Build it
-for the machine that will run it:
+The `bookmarkctl` CLI build installs the client for the local machine running
+the command:
 
 ```sh
-go build -trimpath -o bookmarkctl ./cmd/bookmarkctl
+make build-cli
 ```
 
-That may be macOS, Linux, BSD, or another local client environment. If local CLI
-installation becomes repetitive, add separate client-side automation later.
+That may be macOS, Linux, BSD, or another local client environment. The server
+binary is still cross-compiled separately for the VPS target.
 
 ## Deploy Script
 
