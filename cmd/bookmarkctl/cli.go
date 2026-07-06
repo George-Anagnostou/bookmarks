@@ -117,6 +117,7 @@ func runList(
 	query := fs.String("query", "", "search term")
 	limit := fs.Int("limit", 0, "limit")
 	offset := fs.Int("offset", 0, "offset")
+	output := fs.String("output", "", "output format: table, tsv, json")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -131,6 +132,11 @@ func runList(
 
 	if *offset < 0 {
 		return fmt.Errorf("offset must be non-negative")
+	}
+
+	format, err := ResolveListFormat(*output, stdout, isTerminal)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := loadConfig(lookup)
@@ -157,10 +163,7 @@ func runList(
 		return fmt.Errorf("list bookmarks: %w", err)
 	}
 
-	for _, bookmarkItem := range bookmarkList {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\n", bookmarkItem.ID, bookmarkItem.URL, bookmarkItem.Title)
-	}
-	return nil
+	return WriteListBookmarks(stdout, bookmarkList, ListFormatOptions{Format: format})
 }
 
 func runEdit(

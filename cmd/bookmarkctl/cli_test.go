@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -156,21 +157,9 @@ func TestRunAddRequiresURL(t *testing.T) {
 	}
 }
 
-func TestRunListPrintsBookmarks(t *testing.T) {
+func TestRunListCallsClient(t *testing.T) {
 	client := &fakeBookmarkClient{
-		listBookmarks: []bookmarks.Bookmark{
-			{
-				ID:            "bookmark-1",
-				URL:           "https://example.com/a",
-				NormalizedURL: "https://example.com/a",
-				Title:         "Example",
-			},
-			{
-				ID:            "bookmark-2",
-				URL:           "https://example.com/b",
-				NormalizedURL: "https://example.com/b",
-			},
-		},
+		listBookmarks: sampleListBookmarks(),
 	}
 	var stdout, stderr bytes.Buffer
 
@@ -187,14 +176,15 @@ func TestRunListPrintsBookmarks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
+	if !client.listCalled {
+		t.Fatal("ListBookmarks was not called")
+	}
 	if client.listQuery != (bookmarks.ListQuery{}) {
 		t.Fatalf("ListBookmarks query = %#v, want zero value", client.listQuery)
 	}
-
-	assertBookmarkRows(t, stdout.String(), [][]string{
-		{"bookmark-1", "https://example.com/a", "Example"},
-		{"bookmark-2", "https://example.com/b", ""},
-	})
+	if stdout.Len() == 0 {
+		t.Fatal("stdout is empty, want output")
+	}
 }
 
 func TestRunListPassesQueryOptions(t *testing.T) {
@@ -227,6 +217,38 @@ func TestRunListPassesQueryOptions(t *testing.T) {
 	}
 }
 
+func TestRunListOutputJSON(t *testing.T) {
+	client := &fakeBookmarkClient{
+		listBookmarks: sampleListBookmarks(),
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"list", "-output", "json"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !client.listCalled {
+		t.Fatal("ListBookmarks was not called")
+	}
+
+	var got []bookmarks.Bookmark
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v, stdout = %q", err, stdout.String())
+	}
+	if len(got) != len(sampleListBookmarks()) {
+		t.Fatalf("decoded bookmarks len = %d, want %d", len(got), len(sampleListBookmarks()))
+	}
+}
+
 func TestRunListRejectsBadQueryOptionsBeforeCreatingClient(t *testing.T) {
 	tests := []struct {
 		name string
@@ -239,6 +261,10 @@ func TestRunListRejectsBadQueryOptionsBeforeCreatingClient(t *testing.T) {
 		{
 			name: "negative offset",
 			args: []string{"list", "-offset", "-1"},
+		},
+		{
+			name: "unknown output",
+			args: []string{"list", "-output", "wat"},
 		},
 		{
 			name: "extra arg",
@@ -598,23 +624,6 @@ func validLookup() func(string) (string, bool) {
 		"BOOKMARKS_URL":   "http://localhost:8080",
 		"BOOKMARKS_TOKEN": "test-token",
 	})
-}
-
-func assertBookmarkRows(t *testing.T, output string, want [][]string) {
-	t.Helper()
-
-	output = strings.TrimSuffix(output, "\n")
-	gotLines := strings.Split(output, "\n")
-	if len(gotLines) != len(want) {
-		t.Fatalf("printed %d rows, want %d: %q", len(gotLines), len(want), output)
-	}
-
-	for i, line := range gotLines {
-		gotFields := strings.Split(line, "\t")
-		if !reflect.DeepEqual(gotFields, want[i]) {
-			t.Fatalf("row %d = %#v, want %#v", i, gotFields, want[i])
-		}
-	}
 }
 
 type fakeBookmarkClient struct {

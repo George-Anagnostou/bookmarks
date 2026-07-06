@@ -4,17 +4,16 @@
 
 - CRUD API and `bookmarkctl` commands
 - List search and pagination
+- `bookmarkctl list` output formats (table, tsv, json)
 - Deploy, rollback, and daily VPS backups
 - iOS Shortcut for saving URLs (manual setup)
 
 ## Next
 
-Priorities reflect current goals: better CLI output, mobile retrieval, and desktop
-hotkey integration.
+Priorities reflect current goals: mobile retrieval and desktop hotkey integration.
 
 ### CLI UX
 
-- Improve `bookmarkctl list` output (readable columns, optional JSON)
 - Hammerspoon or hotkey wrapper around `bookmarkctl`
 
 ### Mobile reading
