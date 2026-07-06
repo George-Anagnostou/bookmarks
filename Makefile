@@ -13,7 +13,7 @@ export BOOKMARKS_DEPLOY_USER
 export BOOKMARKS_DOMAIN
 export BOOKMARKS_URL
 
-.PHONY: test build-server build-cli update rollback clean
+.PHONY: test build-server build-cli update rollback install-backups clean
 
 test:
 	$(GO) test ./...
@@ -27,6 +27,9 @@ update: test build-cli build-server
 
 rollback:
 	./scripts/rollback-bookmarkd.sh
+
+install-backups:
+	./scripts/remote-install-backups.sh
 
 build-cli:
 	mkdir -p $(DIST_DIR)

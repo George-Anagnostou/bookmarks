@@ -68,13 +68,19 @@ as_root() {
 	fi
 }
 
-db_path="/var/lib/bookmarks/bookmarks.db"
+data_dir="/var/lib/bookmarks"
+db_path="$data_dir/bookmarks.db"
 if [ -r /etc/bookmarks/bookmarkd.env ]; then
 	# The env file is written by bootstrap and uses shell-compatible KEY=value lines.
 	# shellcheck disable=SC1091
 	. /etc/bookmarks/bookmarkd.env
 	db_path="${BOOKMARKS_DBPATH:-$db_path}"
 fi
+case "$db_path" in
+	/*) ;;
+	./*) db_path="$data_dir/${db_path#./}" ;;
+	*) db_path="$data_dir/$db_path" ;;
+esac
 
 if [ -f "$db_path" ]; then
 	if [ ! -x /usr/local/sbin/bookmarks-backup ]; then
