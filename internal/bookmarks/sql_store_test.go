@@ -86,7 +86,7 @@ func TestSQLStorePersistsAcrossReopen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	got, err := store.ListBookmarks(context.Background())
+	got, err := store.ListBookmarks(context.Background(), ListQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

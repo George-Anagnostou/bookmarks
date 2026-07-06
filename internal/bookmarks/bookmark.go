@@ -47,9 +47,15 @@ type UpdateInput struct {
 	Source *string `json:"source,omitempty"`
 }
 
+type ListQuery struct {
+	Query  string
+	Limit  int
+	Offset int
+}
+
 type Store interface {
 	CreateBookmark(ctx context.Context, input CreateInput) (Bookmark, bool, error)
-	ListBookmarks(ctx context.Context) ([]Bookmark, error)
+	ListBookmarks(ctx context.Context, query ListQuery) ([]Bookmark, error)
 	UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error)
 	DeleteBookmark(ctx context.Context, id string) error
 }

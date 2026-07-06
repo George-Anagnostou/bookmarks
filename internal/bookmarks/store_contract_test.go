@@ -25,7 +25,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("NormalizedURL = %q", bookmark.NormalizedURL)
 		}
 
-		got, err := store.ListBookmarks(context.Background())
+		got, err := store.ListBookmarks(context.Background(), ListQuery{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -83,7 +83,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("got %v, wanted %v", first.Source, source)
 		}
 
-		bookmarks, err := store.ListBookmarks(context.Background())
+		bookmarks, err := store.ListBookmarks(context.Background(), ListQuery{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -102,6 +102,196 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 		if got.Source != source {
 			t.Fatalf("got %v, wanted %v", got.Source, source)
+		}
+	})
+
+	t.Run("list bookmark query searches text fields", func(t *testing.T) {
+		store := newStore(t)
+		inputs := []CreateInput{
+			{
+				URL:    "https://sqlite.org/fts5.html",
+				Title:  "SQLite FTS",
+				Notes:  "reference documentation",
+				Source: "desktop",
+			},
+			{
+				URL:    "https://example.com/articles/go",
+				Title:  "Go Article",
+				Notes:  "mentions databases",
+				Source: "ios-shortcut",
+			},
+			{
+				URL:    "https://example.com/read-later",
+				Title:  "Reading Queue",
+				Notes:  "saved from phone",
+				Source: "mobile",
+			},
+		}
+		createdByURL := make(map[string]Bookmark)
+		for _, input := range inputs {
+			bookmark, created, err := store.CreateBookmark(context.Background(), input)
+			if err != nil {
+				t.Fatalf("CreateBookmark() error = %v", err)
+			}
+			if !created {
+				t.Fatal("CreateBookmark() created = false, want true")
+			}
+			createdByURL[input.URL] = bookmark
+		}
+
+		tests := []struct {
+			name    string
+			query   string
+			wantURL string
+		}{
+			{name: "title", query: "fts", wantURL: "https://sqlite.org/fts5.html"},
+			{name: "url", query: "articles/go", wantURL: "https://example.com/articles/go"},
+			{name: "normalized url", query: "sqlite.org", wantURL: "https://sqlite.org/fts5.html"},
+			{name: "notes", query: "PHONE", wantURL: "https://example.com/read-later"},
+			{name: "source", query: "ios", wantURL: "https://example.com/articles/go"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := store.ListBookmarks(context.Background(), ListQuery{Query: tt.query})
+				if err != nil {
+					t.Fatalf("ListBookmarks() error = %v", err)
+				}
+				if len(got) != 1 {
+					t.Fatalf("ListBookmarks() returned %d bookmarks, want 1: %#v", len(got), got)
+				}
+				if got[0].ID != createdByURL[tt.wantURL].ID {
+					t.Fatalf("bookmark ID = %q, want %q", got[0].ID, createdByURL[tt.wantURL].ID)
+				}
+			})
+		}
+	})
+
+	t.Run("list bookmark query trims whitespace and empty query lists all", func(t *testing.T) {
+		store := newStore(t)
+		first, created, err := store.CreateBookmark(context.Background(), CreateInput{
+			URL:   "https://example.com/first",
+			Title: "First",
+		})
+		if err != nil {
+			t.Fatalf("CreateBookmark() first error = %v", err)
+		}
+		if !created {
+			t.Fatal("first CreateBookmark() created = false, want true")
+		}
+		second, created, err := store.CreateBookmark(context.Background(), CreateInput{
+			URL:   "https://example.com/second",
+			Title: "Second",
+		})
+		if err != nil {
+			t.Fatalf("CreateBookmark() second error = %v", err)
+		}
+		if !created {
+			t.Fatal("second CreateBookmark() created = false, want true")
+		}
+
+		got, err := store.ListBookmarks(context.Background(), ListQuery{Query: "  first  "})
+		if err != nil {
+			t.Fatalf("ListBookmarks() trimmed query error = %v", err)
+		}
+		if len(got) != 1 || got[0].ID != first.ID {
+			t.Fatalf("trimmed query returned %#v, want first bookmark", got)
+		}
+
+		got, err = store.ListBookmarks(context.Background(), ListQuery{Query: "   "})
+		if err != nil {
+			t.Fatalf("ListBookmarks() empty query error = %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("empty query returned %d bookmarks, want 2", len(got))
+		}
+		if got[0].ID != second.ID || got[1].ID != first.ID {
+			t.Fatalf("empty query order = %#v, want newest first", got)
+		}
+	})
+
+	t.Run("list bookmark limit and offset page newest first results", func(t *testing.T) {
+		store := newStore(t)
+		for _, url := range []string{
+			"https://example.com/one",
+			"https://example.com/two",
+			"https://example.com/three",
+			"https://example.com/four",
+		} {
+			_, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: url})
+			if err != nil {
+				t.Fatalf("CreateBookmark(%q) error = %v", url, err)
+			}
+			if !created {
+				t.Fatalf("CreateBookmark(%q) created = false, want true", url)
+			}
+		}
+
+		all, err := store.ListBookmarks(context.Background(), ListQuery{})
+		if err != nil {
+			t.Fatalf("ListBookmarks() all error = %v", err)
+		}
+		if len(all) != 4 {
+			t.Fatalf("ListBookmarks() all returned %d bookmarks, want 4", len(all))
+		}
+
+		got, err := store.ListBookmarks(context.Background(), ListQuery{
+			Limit:  2,
+			Offset: 1,
+		})
+		if err != nil {
+			t.Fatalf("ListBookmarks() error = %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("ListBookmarks() returned %d bookmarks, want 2", len(got))
+		}
+
+		want := all[1:3]
+		for i := range want {
+			if got[i].ID != want[i].ID {
+				t.Fatalf("bookmark %d ID = %q, want %q", i, got[i].ID, want[i].ID)
+			}
+		}
+	})
+
+	t.Run("list bookmark query limit and offset compose", func(t *testing.T) {
+		store := newStore(t)
+		for _, input := range []CreateInput{
+			{URL: "https://example.com/go-one", Title: "Go one"},
+			{URL: "https://example.com/rust", Title: "Rust"},
+			{URL: "https://example.com/go-two", Title: "Go two"},
+			{URL: "https://example.com/go-three", Title: "Go three"},
+		} {
+			_, created, err := store.CreateBookmark(context.Background(), input)
+			if err != nil {
+				t.Fatalf("CreateBookmark(%q) error = %v", input.URL, err)
+			}
+			if !created {
+				t.Fatalf("CreateBookmark(%q) created = false, want true", input.URL)
+			}
+		}
+
+		allGo, err := store.ListBookmarks(context.Background(), ListQuery{Query: "go"})
+		if err != nil {
+			t.Fatalf("ListBookmarks() all matching error = %v", err)
+		}
+		if len(allGo) != 3 {
+			t.Fatalf("ListBookmarks() all matching returned %d bookmarks, want 3", len(allGo))
+		}
+
+		got, err := store.ListBookmarks(context.Background(), ListQuery{
+			Query:  "go",
+			Limit:  1,
+			Offset: 1,
+		})
+		if err != nil {
+			t.Fatalf("ListBookmarks() error = %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("ListBookmarks() returned %d bookmarks, want 1", len(got))
+		}
+		if got[0].ID != allGo[1].ID {
+			t.Fatalf("bookmark ID = %q, want %q", got[0].ID, allGo[1].ID)
 		}
 	})
 
@@ -370,7 +560,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("UpdateBookmark() error = %v, want %v", err, ErrDuplicateURL)
 		}
 
-		got, err := store.ListBookmarks(context.Background())
+		got, err := store.ListBookmarks(context.Background(), ListQuery{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -438,7 +628,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("DeleteBookmark() error = %v", err)
 		}
 
-		got, err := store.ListBookmarks(context.Background())
+		got, err := store.ListBookmarks(context.Background(), ListQuery{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -478,7 +668,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("DeleteBookmark() error = %v", err)
 		}
 
-		got, err := store.ListBookmarks(context.Background())
+		got, err := store.ListBookmarks(context.Background(), ListQuery{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -507,7 +697,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("DeleteBookmark() error = %v, want %v", err, ErrNotFound)
 		}
 
-		got, err := store.ListBookmarks(context.Background())
+		got, err := store.ListBookmarks(context.Background(), ListQuery{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"bookmarks/internal/bookmarks"
@@ -105,7 +106,13 @@ func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request) {
-	bookmarksList, err := s.store.ListBookmarks(r.Context())
+	listQuery, err := getListQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid parameters"})
+		return
+	}
+
+	bookmarksList, err := s.store.ListBookmarks(r.Context(), listQuery)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
@@ -227,4 +234,46 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 // using constant-time avoids leaking partial info about token through tiny timing differences
 func constantTimeEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func getListQuery(r *http.Request) (bookmarks.ListQuery, error) {
+	query := r.URL.Query().Get("query")
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	query = strings.TrimSpace(query)
+	limitStr = strings.TrimSpace(limitStr)
+	offsetStr = strings.TrimSpace(offsetStr)
+
+	var limit int
+	if limitStr == "" {
+		limit = 0
+	} else {
+		var err error
+		limit, err = strconv.Atoi(limitStr)
+		if err != nil {
+			return bookmarks.ListQuery{}, err
+		}
+	}
+
+	var offset int
+	if offsetStr == "" {
+		offset = 0
+	} else {
+		var err error
+		offset, err = strconv.Atoi(offsetStr)
+		if err != nil {
+			return bookmarks.ListQuery{}, err
+		}
+	}
+
+	if limit < 0 || offset < 0 {
+		return bookmarks.ListQuery{}, errors.New("limit and offset must be non-negative")
+	}
+
+	return bookmarks.ListQuery{
+		Query:  query,
+		Limit:  limit,
+		Offset: offset,
+	}, nil
 }

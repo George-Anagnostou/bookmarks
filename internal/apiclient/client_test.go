@@ -170,6 +170,9 @@ func TestListBookmarks(t *testing.T) {
 		if r.URL.Path != "/api/bookmarks" {
 			t.Fatalf("path = %s, want /api/bookmarks", r.URL.Path)
 		}
+		if r.URL.RawQuery != "" {
+			t.Fatalf("RawQuery = %q, want empty", r.URL.RawQuery)
+		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Fatalf("Authorization = %q, want bearer token", got)
 		}
@@ -184,7 +187,7 @@ func TestListBookmarks(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server.URL)
-	got, err := client.ListBookmarks(context.Background())
+	got, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
 	if err != nil {
 		t.Fatalf("ListBookmarks() error = %v", err)
 	}
@@ -208,7 +211,54 @@ func TestListBookmarksEmpty(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server.URL)
-	got, err := client.ListBookmarks(context.Background())
+	got, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+	if err != nil {
+		t.Fatalf("ListBookmarks() error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("bookmarks = nil, want empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(bookmarks) = %d, want 0", len(got))
+	}
+}
+
+func TestListBookmarksSendsQueryOptions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want %s", r.Method, http.MethodGet)
+		}
+		if r.URL.Path != "/api/bookmarks" {
+			t.Fatalf("path = %s, want /api/bookmarks", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("query"); got != "sqlite fts" {
+			t.Fatalf("query param = %q, want %q", got, "sqlite fts")
+		}
+		if got := r.URL.Query().Get("limit"); got != "25" {
+			t.Fatalf("limit param = %q, want 25", got)
+		}
+		if got := r.URL.Query().Get("offset"); got != "50" {
+			t.Fatalf("offset param = %q, want 50", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Bookmarks []bookmarks.Bookmark `json:"bookmarks"`
+		}{
+			Bookmarks: []bookmarks.Bookmark{},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL)
+	got, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{
+		Query:  "sqlite fts",
+		Limit:  25,
+		Offset: 50,
+	})
 	if err != nil {
 		t.Fatalf("ListBookmarks() error = %v", err)
 	}
@@ -454,7 +504,7 @@ func TestClientReturnsErrorForNonSuccessStatus(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			client := newTestClient(t, server.URL)
-			_, err := client.ListBookmarks(context.Background())
+			_, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
 			if err == nil {
 				t.Fatal("ListBookmarks() error = nil, want error")
 			}

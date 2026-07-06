@@ -187,11 +187,84 @@ func TestRunListPrintsBookmarks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
+	if client.listQuery != (bookmarks.ListQuery{}) {
+		t.Fatalf("ListBookmarks query = %#v, want zero value", client.listQuery)
+	}
 
 	assertBookmarkRows(t, stdout.String(), [][]string{
 		{"bookmark-1", "https://example.com/a", "Example"},
 		{"bookmark-2", "https://example.com/b", ""},
 	})
+}
+
+func TestRunListPassesQueryOptions(t *testing.T) {
+	client := &fakeBookmarkClient{}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"list", "-query", "sqlite", "-limit", "25", "-offset", "50"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !client.listCalled {
+		t.Fatal("ListBookmarks was not called")
+	}
+	want := bookmarks.ListQuery{
+		Query:  "sqlite",
+		Limit:  25,
+		Offset: 50,
+	}
+	if client.listQuery != want {
+		t.Fatalf("ListBookmarks query = %#v, want %#v", client.listQuery, want)
+	}
+}
+
+func TestRunListRejectsBadQueryOptionsBeforeCreatingClient(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "negative limit",
+			args: []string{"list", "-limit", "-1"},
+		},
+		{
+			name: "negative offset",
+			args: []string{"list", "-offset", "-1"},
+		},
+		{
+			name: "extra arg",
+			args: []string{"list", "extra"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := run(
+				context.Background(),
+				tt.args,
+				validLookup(),
+				&stdout,
+				&stderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+			if err == nil {
+				t.Fatal("run() error = nil, want error")
+			}
+		})
+	}
 }
 
 func TestRunReturnsClientErrors(t *testing.T) {
@@ -551,6 +624,8 @@ type fakeBookmarkClient struct {
 	createCreated  bool
 	createErr      error
 
+	listCalled    bool
+	listQuery     bookmarks.ListQuery
 	listBookmarks []bookmarks.Bookmark
 	listErr       error
 
@@ -571,7 +646,9 @@ func (f *fakeBookmarkClient) CreateBookmark(ctx context.Context, input bookmarks
 	return f.createBookmark, f.createCreated, f.createErr
 }
 
-func (f *fakeBookmarkClient) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error) {
+func (f *fakeBookmarkClient) ListBookmarks(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+	f.listCalled = true
+	f.listQuery = query
 	return f.listBookmarks, f.listErr
 }
 

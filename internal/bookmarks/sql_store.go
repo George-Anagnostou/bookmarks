@@ -141,12 +141,41 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 	return bookmark, true, nil
 }
 
-func (s *SQLStore) ListBookmarks(ctx context.Context) ([]Bookmark, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bookmark, error) {
+	var args []any
+	where := []string{
+		"LOWER(url) LIKE ?",
+		"LOWER(normalized_url) LIKE ?",
+		"LOWER(title) LIKE ?",
+		"LOWER(notes) LIKE ?",
+		"LOWER(source) LIKE ?",
+	}
+
+	q := strings.TrimSpace(listQuery.Query)
+
+	query := `
 		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
 		FROM bookmarks
-		ORDER BY created_at DESC, id DESC
-	`)
+	`
+
+	if q != "" {
+		query += " WHERE " + strings.Join(where, " OR ")
+		args = append(args, "%"+strings.ToLower(q)+"%", "%"+strings.ToLower(q)+"%", "%"+strings.ToLower(q)+"%", "%"+strings.ToLower(q)+"%", "%"+strings.ToLower(q)+"%")
+	}
+
+	query += " ORDER BY created_at DESC, rowid DESC "
+
+	if listQuery.Limit > 0 {
+		query += " LIMIT ? "
+		args = append(args, listQuery.Limit)
+	}
+
+	if listQuery.Offset > 0 {
+		query += " OFFSET ? "
+		args = append(args, listQuery.Offset)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list bookmarks: %w", err)
 	}

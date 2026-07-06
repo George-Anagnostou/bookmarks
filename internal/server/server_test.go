@@ -256,7 +256,10 @@ func TestListBookmarksJSON(t *testing.T) {
 	}
 
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context) ([]bookmarks.Bookmark, error) {
+		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+			if query != (bookmarks.ListQuery{}) {
+				t.Fatalf("query = %#v, want zero value", query)
+			}
 			return want, nil
 		},
 	}
@@ -283,7 +286,10 @@ func TestListBookmarksJSON(t *testing.T) {
 
 func TestListBookmarksJSONReturnsEmptyArray(t *testing.T) {
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context) ([]bookmarks.Bookmark, error) {
+		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+			if query != (bookmarks.ListQuery{}) {
+				t.Fatalf("query = %#v, want zero value", query)
+			}
 			return nil, nil
 		},
 	}
@@ -308,6 +314,73 @@ func TestListBookmarksJSONReturnsEmptyArray(t *testing.T) {
 	}
 	if len(got.Bookmarks) != 0 {
 		t.Fatalf("len(bookmarks) = %d, want 0", len(got.Bookmarks))
+	}
+}
+
+func TestListBookmarksJSONPassesListQuery(t *testing.T) {
+	store := &fakeStore{
+		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+			want := bookmarks.ListQuery{
+				Query:  "sqlite",
+				Limit:  25,
+				Offset: 50,
+			}
+			if query != want {
+				t.Fatalf("query = %#v, want %#v", query, want)
+			}
+			return []bookmarks.Bookmark{}, nil
+		},
+	}
+	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks?query=++sqlite++&limit=25&offset=50", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertJSONContentType(t, rec)
+}
+
+func TestListBookmarksJSONRejectsBadQueryParams(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "bad limit",
+			path: "/api/bookmarks?limit=abc",
+		},
+		{
+			name: "negative limit",
+			path: "/api/bookmarks?limit=-1",
+		},
+		{
+			name: "bad offset",
+			path: "/api/bookmarks?offset=abc",
+		},
+		{
+			name: "negative offset",
+			path: "/api/bookmarks?offset=-1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			req.Header.Set("Authorization", "Bearer test-token")
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			assertJSONContentType(t, rec)
+		})
 	}
 }
 
@@ -343,7 +416,7 @@ func TestListBookmarksJSONRequiresBearerToken(t *testing.T) {
 
 func TestListBookmarksJSONHandlesStoreError(t *testing.T) {
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context) ([]bookmarks.Bookmark, error) {
+		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
 			return nil, errors.New("database unavailable")
 		},
 	}
@@ -714,7 +787,7 @@ func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
 
 type fakeStore struct {
 	createBookmark func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
-	listBookmarks  func(context.Context) ([]bookmarks.Bookmark, error)
+	listBookmarks  func(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
 	updateBookmark func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
 	deleteBookmark func(context.Context, string) error
 }
@@ -726,11 +799,11 @@ func (s *fakeStore) CreateBookmark(ctx context.Context, input bookmarks.CreateIn
 	return s.createBookmark(ctx, input)
 }
 
-func (s *fakeStore) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error) {
+func (s *fakeStore) ListBookmarks(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
 	if s.listBookmarks == nil {
 		panic("unexpected ListBookmarks call")
 	}
-	return s.listBookmarks(ctx)
+	return s.listBookmarks(ctx, query)
 }
 
 func (s *fakeStore) UpdateBookmark(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {

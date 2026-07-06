@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"bookmarks/internal/bookmarks"
@@ -98,11 +99,24 @@ func (c *Client) CreateBookmark(ctx context.Context, input bookmarks.CreateInput
 	return out.Bookmark, out.Created, nil
 }
 
-func (c *Client) ListBookmarks(ctx context.Context) ([]bookmarks.Bookmark, error) {
+func (c *Client) ListBookmarks(ctx context.Context, listQuery bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/bookmarks", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+
+	q := req.URL.Query()
+	if listQuery.Query != "" {
+		q.Add("query", listQuery.Query)
+	}
+	if listQuery.Limit > 0 {
+		q.Add("limit", strconv.Itoa(listQuery.Limit))
+	}
+	if listQuery.Offset > 0 {
+		q.Add("offset", strconv.Itoa(listQuery.Offset))
+	}
+
+	req.URL.RawQuery = q.Encode()
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
 

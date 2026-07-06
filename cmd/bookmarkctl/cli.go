@@ -13,7 +13,7 @@ import (
 
 type bookmarkClient interface {
 	CreateBookmark(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
-	ListBookmarks(context.Context) ([]bookmarks.Bookmark, error)
+	ListBookmarks(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
 	UpdateBookmark(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
 	DeleteBookmark(context.Context, string) error
 }
@@ -114,6 +114,10 @@ func runList(
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
+	query := fs.String("query", "", "search term")
+	limit := fs.Int("limit", 0, "limit")
+	offset := fs.Int("offset", 0, "offset")
+
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,9 +125,23 @@ func runList(
 		return errors.New("list does not take args")
 	}
 
+	if *limit < 0 {
+		return fmt.Errorf("limit must be non-negative")
+	}
+
+	if *offset < 0 {
+		return fmt.Errorf("offset must be non-negative")
+	}
+
 	cfg, err := loadConfig(lookup)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	listQuery := bookmarks.ListQuery{
+		Query:  *query,
+		Limit:  *limit,
+		Offset: *offset,
 	}
 
 	client, err := newClient(apiclient.Config{
@@ -134,7 +152,7 @@ func runList(
 		return fmt.Errorf("create client: %w", err)
 	}
 
-	bookmarkList, err := client.ListBookmarks(ctx)
+	bookmarkList, err := client.ListBookmarks(ctx, listQuery)
 	if err != nil {
 		return fmt.Errorf("list bookmarks: %w", err)
 	}
