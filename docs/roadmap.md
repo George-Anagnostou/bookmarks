@@ -1,57 +1,44 @@
-# Bookmark Manager Roadmap
+# Roadmap
 
-The alpha is now usable end to end:
+## Done
 
-- `bookmarkd` runs on the VPS behind nginx/systemd.
-- `bookmarkctl add` can save bookmarks through the API.
-- `bookmarkctl list` can retrieve bookmarks through the API.
-- Direct `curl` requests work.
-- The iPhone Shortcut can save shared URLs.
+- CRUD API and `bookmarkctl` commands
+- List search and pagination
+- Deploy, rollback, and daily VPS backups
+- iOS Shortcut for saving URLs (manual setup)
 
-This document tracks the next buildouts. Each workstream should stay small enough to implement and review independently.
+## Next
 
-## Workstreams
+Priorities reflect current goals: better CLI output, mobile retrieval, and desktop
+hotkey integration.
 
-1. Deployment automation and hardening
-   - Document the current Debian/nginx/systemd setup.
-   - Make updates repeatable with as little manual VPS work as possible.
-   - Harden service permissions and deployment procedures.
-   - Start with root SSH deployment for simplicity, then migrate to a
-     sudo-capable deploy user.
+### CLI UX
 
-2. Edit and delete
-   - Turn the bookmark API into basic CRUD.
-   - Add hard delete first.
-   - Add metadata editing for title, notes, URL, and later tags.
+- Improve `bookmarkctl list` output (readable columns, optional JSON)
+- Hammerspoon or hotkey wrapper around `bookmarkctl`
 
-3. Reading
-   - Improve bookmark retrieval as the list grows.
-   - Make reading usable from mobile.
-   - Explore HTML, search, pagination, Shortcut retrieval, and lightweight app-like views.
+### Mobile reading
 
-4. Per-device tokens and auth
-   - Move beyond one shared bearer token.
-   - Add revocable device tokens.
-   - Explore future sharing without committing to multi-user complexity too early.
+- iPhone Shortcut for search-and-open (calls list API)
+- RSS/Atom feed for recent bookmarks in a feed reader
+- Optional HTML index if feeds and shortcuts are not enough
 
-5. Backups
-   - Add a simple SQLite backup strategy on the VPS.
-   - Include restore instructions and backup verification.
+### Operations
 
-## Suggested Order
+- Offsite backup copy to a trusted machine (`rsync` pull)
+- Restore drill documented as a recurring habit
+- Optional deploy-user instead of root SSH
 
-1. Backups
-2. Deployment automation and hardening
-3. Reading
-4. Edit and delete
-5. Per-device tokens and auth
+### Later
 
-Backups should come first because the system is now receiving real bookmarks. Deployment automation should follow because it reduces friction for every later release. Reading should come before deeper CRUD if mobile retrieval quickly becomes painful.
+- Per-device revocable tokens (replace single shared bearer token)
+- Tags support in store and API
+- Title fetching for bookmarks saved without titles
 
-## Project Constraints
+## Constraints
 
-- Prefer Go standard library.
-- Avoid third-party services where practical.
-- Keep the server private by default.
-- Keep mobile capture friction as close to zero as possible.
-- Favor simple, inspectable operational procedures over clever automation.
+- Go standard library where practical
+- Private by default; no third-party services required
+- Keep capture and retrieval friction low
+- Prefer simple scripts over heavy automation
+
