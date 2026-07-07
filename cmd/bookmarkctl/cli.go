@@ -114,6 +114,7 @@ func runList(
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
+	long := fs.Bool("l", false, "long table view, not compatible with json or tsv output")
 	query := fs.String("query", "", "search term")
 	limit := fs.Int("limit", 0, "limit")
 	offset := fs.Int("offset", 0, "offset")
@@ -139,6 +140,10 @@ func runList(
 		return err
 	}
 
+	if *long && format != ListFormatTable {
+		return fmt.Errorf("-l is only valid with table output")
+	}
+
 	cfg, err := loadConfig(lookup)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -148,6 +153,11 @@ func runList(
 		Query:  *query,
 		Limit:  *limit,
 		Offset: *offset,
+	}
+
+	listFormatOptions := ListFormatOptions{
+		Format: format,
+		Long:   *long,
 	}
 
 	client, err := newClient(apiclient.Config{
@@ -163,7 +173,7 @@ func runList(
 		return fmt.Errorf("list bookmarks: %w", err)
 	}
 
-	return WriteListBookmarks(stdout, bookmarkList, ListFormatOptions{Format: format})
+	return WriteListBookmarks(stdout, bookmarkList, listFormatOptions)
 }
 
 func runEdit(

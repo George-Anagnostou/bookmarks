@@ -15,19 +15,20 @@ import (
 type ListFormat string
 
 const (
-	ListFormatTSV   ListFormat = "tsv"
 	ListFormatTable ListFormat = "table"
+	ListFormatTSV   ListFormat = "tsv"
 	ListFormatJSON  ListFormat = "json"
 )
 
 type ListFormatOptions struct {
 	Format ListFormat
+	Long   bool
 }
 
 func WriteListBookmarks(w io.Writer, bookmarkList []bookmarks.Bookmark, opts ListFormatOptions) error {
 	switch opts.Format {
 	case ListFormatTable:
-		return writeListTable(w, bookmarkList)
+		return writeListTable(w, bookmarkList, opts)
 	case ListFormatTSV:
 		return writeListTSV(w, bookmarkList)
 	case ListFormatJSON:
@@ -60,12 +61,19 @@ func isTerminal(w io.Writer) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-func writeListTable(w io.Writer, bookmarkList []bookmarks.Bookmark) error {
+func writeListTable(w io.Writer, bookmarkList []bookmarks.Bookmark, opts ListFormatOptions) error {
 	writer := tabwriter.NewWriter(w, 0, 0, 1, ' ', 0)
-	fmt.Fprintln(writer, "TITLE\tURL\tID")
 
-	for _, bookmark := range bookmarkList {
-		fmt.Fprintf(writer, "%s\t%s\t%s\n", bookmark.Title, bookmark.URL, bookmark.ID)
+	if opts.Long {
+		fmt.Fprintln(writer, "Title\tURL\tNotes\tSource\tCreatedAt\tUpdatedAt\tNormalizedURL\tID")
+		for _, bookmark := range bookmarkList {
+			fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", bookmark.Title, bookmark.URL, bookmark.Notes, bookmark.Source, bookmark.CreatedAt, bookmark.UpdatedAt, bookmark.NormalizedURL, bookmark.ID)
+		}
+	} else {
+		fmt.Fprintln(writer, "Title\tURL")
+		for _, bookmark := range bookmarkList {
+			fmt.Fprintf(writer, "%s\t%s\n", bookmark.Title, bookmark.URL)
+		}
 	}
 	writer.Flush()
 	return nil
@@ -73,7 +81,7 @@ func writeListTable(w io.Writer, bookmarkList []bookmarks.Bookmark) error {
 
 func writeListTSV(w io.Writer, bookmarkList []bookmarks.Bookmark) error {
 	for _, bookmark := range bookmarkList {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", bookmark.Title, bookmark.URL, bookmark.ID)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", bookmark.Title, bookmark.URL, bookmark.Notes, bookmark.Source, bookmark.CreatedAt, bookmark.UpdatedAt, bookmark.NormalizedURL, bookmark.ID)
 	}
 	return nil
 }

@@ -249,6 +249,87 @@ func TestRunListOutputJSON(t *testing.T) {
 	}
 }
 
+func TestRunListLongOutput(t *testing.T) {
+	client := &fakeBookmarkClient{
+		listBookmarks: []bookmarks.Bookmark{
+			{
+				ID:            "bookmark-1",
+				URL:           "https://example.com/a",
+				NormalizedURL: "https://example.com/a",
+				Title:         "Example",
+				Notes:         "read this first",
+				Source:        "ios",
+			},
+			{
+				ID:            "bookmark-2",
+				URL:           "https://example.com/b",
+				NormalizedURL: "https://example.com/b",
+				Title:         "",
+			},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"list", "-l", "-output", "table"},
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			return client, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if !client.listCalled {
+		t.Fatal("ListBookmarks was not called")
+	}
+
+	out := stdout.String()
+	// Long table must include the extended headers
+	for _, h := range []string{"Title", "URL", "Notes", "Source", "CreatedAt", "UpdatedAt", "NormalizedURL", "ID"} {
+		if !strings.Contains(out, h) {
+			t.Fatalf("long table output missing header %q: %q", h, out)
+		}
+	}
+	if !strings.Contains(out, "read this first") {
+		t.Fatalf("long table output missing notes content: %q", out)
+	}
+}
+
+func TestRunListShortOutput(t *testing.T) {
+	client := &fakeBookmarkClient{
+		listBookmarks: []bookmarks.Bookmark{
+			{ID: "b1", URL: "https://ex.com/1", Title: "One"},
+			{ID: "b2", URL: "https://ex.com/2", Title: "Two"},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"list", "-output", "table"}, // no -l
+		validLookup(),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) { return client, nil },
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Title") || !strings.Contains(out, "URL") {
+		t.Fatalf("short table missing Title/URL headers: %q", out)
+	}
+	for _, bad := range []string{"Notes", "Source", "ID", "CreatedAt"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("short table should not contain %q: %q", bad, out)
+		}
+	}
+}
+
 func TestRunListRejectsBadQueryOptionsBeforeCreatingClient(t *testing.T) {
 	tests := []struct {
 		name string
@@ -265,6 +346,18 @@ func TestRunListRejectsBadQueryOptionsBeforeCreatingClient(t *testing.T) {
 		{
 			name: "unknown output",
 			args: []string{"list", "-output", "wat"},
+		},
+		{
+			name: "long with explicit json output",
+			args: []string{"list", "-l", "-output", "json"},
+		},
+		{
+			name: "long with explicit tsv output",
+			args: []string{"list", "-output", "tsv", "-l"},
+		},
+		{
+			name: "long without explicit output (defaults to tsv for non-tty)",
+			args: []string{"list", "-l"},
 		},
 		{
 			name: "extra arg",

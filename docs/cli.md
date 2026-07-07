@@ -6,7 +6,7 @@
 
 ```sh
 bookmarkctl add <url> [-title TITLE] [-notes NOTES]
-bookmarkctl list [-query TERM] [-limit N] [-offset N] [-output FORMAT]
+bookmarkctl list [-l] [-query TERM] [-limit N] [-offset N] [-output FORMAT]
 bookmarkctl edit <id> [-url URL] [-title TITLE] [-notes NOTES] [-source SOURCE]
 bookmarkctl delete <id>
 ```
@@ -33,17 +33,21 @@ Override with `-output table`, `tsv`, or `json`.
 
 | Format | Use |
 |--------|-----|
-| `table` | Human-readable columns: title, url, id |
-| `tsv` | Scripts and pipes: `title`, `url`, `id` (tab-separated, no header) |
-| `json` | Full bookmark objects as a JSON array |
+| `table` | Human-readable columns (normal: Title + URL; with `-l`: all fields) |
+| `tsv` | Scripts and pipes: full bookmark fields (tab-separated, no header); `-l` has no effect |
+| `json` | Full bookmark objects as a JSON array; `-l` has no effect |
 
 Examples:
 
 ```sh
 bookmarkctl list
+bookmarkctl list -l
 bookmarkctl list -query sqlite -limit 25
 bookmarkctl list -output json | jq '.[].url'
 bookmarkctl list | cut -f2
+bookmarkctl list -l -output table
 ```
+
+`-l` (long) only applies to the `table` output and shows all fields. It is rejected when used with `-output tsv` or `-output json`.
 
 `-limit` 0 means no limit. Negative `-limit` or `-offset` is rejected before the API is called.
