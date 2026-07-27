@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -38,9 +39,12 @@ func (f *Fetcher) FetchTitle(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType != "" && !strings.HasPrefix(contentType, "text/html") && !strings.HasPrefix(contentType, "application/xhtml+xml") {
-		return "", fmt.Errorf("bad content type")
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return "", fmt.Errorf("error parsing content type")
+	}
+	if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
+		return "", fmt.Errorf("bad content type: %s", mediaType)
 	}
 
 	limited := io.LimitReader(resp.Body, maxTitleBytes)
@@ -54,12 +58,12 @@ func (f *Fetcher) FetchTitle(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("parse html: %w", err)
 	}
 
-	if t := findMetaOGTitle(doc); t != "" {
-		return t, nil
+	if t := findMetaOGTitle(doc); strings.TrimSpace(t) != "" {
+		return strings.TrimSpace(t), nil
 	}
 
-	if t := findTitleText(doc); t != "" {
-		return t, nil
+	if t := findTitleText(doc); strings.TrimSpace(t) != "" {
+		return strings.TrimSpace(t), nil
 	}
 
 	return "", nil
@@ -75,18 +79,19 @@ func NewFetcher(cfg Config) *Fetcher {
 
 func findMetaOGTitle(n *html.Node) string {
 	if n.Type == html.ElementNode && n.Data == "meta" {
-		var isOG, content string
+		seenOG := false
+		var content string
 		for _, a := range n.Attr {
 			switch a.Key {
-			case "property":
-				if a.Val == "og:title" {
-					isOG = a.Val
+			case "property", "name":
+				if strings.ToLower(a.Val) == "og:title" {
+					seenOG = true
 				}
 			case "content":
 				content = a.Val
 			}
 		}
-		if isOG != "" && content != "" {
+		if seenOG && content != "" {
 			return content
 		}
 	}
@@ -102,9 +107,7 @@ func findMetaOGTitle(n *html.Node) string {
 
 func findTitleText(n *html.Node) string {
 	if n.Type == html.ElementNode && n.Data == "title" {
-		if c := n.FirstChild; c != nil && c.Type == html.TextNode {
-			return strings.TrimSpace(c.Data)
-		}
+		return n.FirstChild.Data
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {

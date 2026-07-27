@@ -46,7 +46,9 @@ func TestCreateBookmark(t *testing.T) {
 		},
 	}
 
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := newJSONRequest(t, http.MethodPost, "/api/bookmarks", map[string]string{
 		"url":    "https://example.com/a",
 		"title":  "Example",
@@ -86,7 +88,9 @@ func TestCreateBookmarkDuplicate(t *testing.T) {
 		},
 	}
 
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := newJSONRequest(t, http.MethodPost, "/api/bookmarks", map[string]string{
 		"url": "https://example.com/a",
 	})
@@ -110,7 +114,7 @@ func TestCreateBookmarkDuplicate(t *testing.T) {
 }
 
 func TestCreateBookmarkRequiresBearerToken(t *testing.T) {
-	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 
 	tests := []struct {
 		name          string
@@ -212,7 +216,10 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 					return bookmarks.Bookmark{}, true, nil
 				},
 			}
-			handler := New(Config{Store: store, Token: "test-token"}).Handler()
+
+			fetch := &fakeFetcher{}
+
+			handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 
 			req := httptest.NewRequest(tt.method, "/api/bookmarks", bytes.NewBufferString(tt.body))
 			req.Header.Set("Authorization", "Bearer test-token")
@@ -263,7 +270,10 @@ func TestListBookmarksJSON(t *testing.T) {
 			return want, nil
 		},
 	}
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 
@@ -293,7 +303,10 @@ func TestListBookmarksJSONReturnsEmptyArray(t *testing.T) {
 			return nil, nil
 		},
 	}
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 
@@ -331,7 +344,10 @@ func TestListBookmarksJSONPassesListQuery(t *testing.T) {
 			return []bookmarks.Bookmark{}, nil
 		},
 	}
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks?query=++sqlite++&limit=25&offset=50", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 
@@ -369,7 +385,7 @@ func TestListBookmarksJSONRejectsBadQueryParams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+			handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			req.Header.Set("Authorization", "Bearer test-token")
 
@@ -385,7 +401,7 @@ func TestListBookmarksJSONRejectsBadQueryParams(t *testing.T) {
 }
 
 func TestListBookmarksJSONRequiresBearerToken(t *testing.T) {
-	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 
 	tests := []struct {
 		name          string
@@ -420,7 +436,8 @@ func TestListBookmarksJSONHandlesStoreError(t *testing.T) {
 			return nil, errors.New("database unavailable")
 		},
 	}
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	fetch := &fakeFetcher{}
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/api/bookmarks", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 
@@ -467,7 +484,9 @@ func TestUpdateBookmark(t *testing.T) {
 		},
 	}
 
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := newJSONRequest(t, http.MethodPatch, "/api/bookmarks/bookmark-1", map[string]string{
 		"url":    "https://example.com/new",
 		"title":  "Updated",
@@ -496,7 +515,7 @@ func TestUpdateBookmark(t *testing.T) {
 }
 
 func TestUpdateBookmarkRequiresBearerToken(t *testing.T) {
-	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 
 	tests := []struct {
 		name          string
@@ -629,7 +648,9 @@ func TestUpdateBookmarkRejectsBadRequests(t *testing.T) {
 				}
 			}
 
-			handler := New(Config{Store: store, Token: "test-token"}).Handler()
+			fetch := &fakeFetcher{}
+
+			handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 			req := httptest.NewRequest(tt.method, "/api/bookmarks/bookmark-1", bytes.NewBufferString(tt.body))
 			req.Header.Set("Authorization", "Bearer test-token")
 			req.Header.Set("Content-Type", "application/json")
@@ -657,7 +678,9 @@ func TestDeleteBookmark(t *testing.T) {
 		},
 	}
 
-	handler := New(Config{Store: store, Token: "test-token"}).Handler()
+	fetch := &fakeFetcher{}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 	req := httptest.NewRequest(http.MethodDelete, "/api/bookmarks/bookmark-1", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 
@@ -676,7 +699,7 @@ func TestDeleteBookmark(t *testing.T) {
 }
 
 func TestDeleteBookmarkRequiresBearerToken(t *testing.T) {
-	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 
 	tests := []struct {
 		name          string
@@ -734,7 +757,9 @@ func TestDeleteBookmarkHandlesStoreErrors(t *testing.T) {
 				},
 			}
 
-			handler := New(Config{Store: store, Token: "test-token"}).Handler()
+			fetch := &fakeFetcher{}
+
+			handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetch}).Handler()
 			req := httptest.NewRequest(http.MethodDelete, "/api/bookmarks/bookmark-1", nil)
 			req.Header.Set("Authorization", "Bearer test-token")
 
@@ -750,7 +775,7 @@ func TestDeleteBookmarkHandlesStoreErrors(t *testing.T) {
 }
 
 func TestHealthz(t *testing.T) {
-	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
 	rec := httptest.NewRecorder()
@@ -774,7 +799,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
-	handler := New(Config{Store: &fakeStore{}, Token: "test-token"}).Handler()
+	handler := NewServer(Config{Store: &fakeStore{}, Token: "test-token", Fetcher: &fakeFetcher{}}).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
 	rec := httptest.NewRecorder()
@@ -790,6 +815,17 @@ type fakeStore struct {
 	listBookmarks  func(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
 	updateBookmark func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
 	deleteBookmark func(context.Context, string) error
+}
+
+type fakeFetcher struct {
+	fetchTitle func(context.Context, string) (string, error)
+}
+
+func (f *fakeFetcher) FetchTitle(ctx context.Context, url string) (string, error) {
+	if f.fetchTitle == nil {
+		panic("unexpected FetchTitle call")
+	}
+	return f.fetchTitle(ctx, url)
 }
 
 func (s *fakeStore) CreateBookmark(ctx context.Context, input bookmarks.CreateInput) (bookmarks.Bookmark, bool, error) {

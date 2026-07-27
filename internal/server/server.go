@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -13,13 +14,15 @@ import (
 )
 
 type Config struct {
-	Store bookmarks.Store
-	Token string
+	Store   bookmarks.Store
+	Token   string
+	Fetcher Fetcher
 }
 
 type Server struct {
-	store bookmarks.Store
-	token string
+	store   bookmarks.Store
+	token   string
+	fetcher Fetcher
 }
 
 type createBookmarkResponse struct {
@@ -42,18 +45,26 @@ type errorResponse struct {
 // Cap request bodies at 64KB
 const maxBookmarkBodyBytes = 64 * 1024
 
-// New creates a server and panics if required config is missing.
-func New(cfg Config) *Server {
+type Fetcher interface {
+	FetchTitle(context.Context, string) (string, error)
+}
+
+// NewServer creates a server and panics if required config is missing.
+func NewServer(cfg Config) *Server {
 	if cfg.Store == nil {
 		panic("server store is required")
 	}
 	if cfg.Token == "" {
 		panic("server token is required")
 	}
+	if cfg.Fetcher == nil {
+		panic("server Fetcher is required")
+	}
 
 	return &Server{
-		store: cfg.Store,
-		token: cfg.Token,
+		store:   cfg.Store,
+		token:   cfg.Token,
+		fetcher: cfg.Fetcher,
 	}
 }
 

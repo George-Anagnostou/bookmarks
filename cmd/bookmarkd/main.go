@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"bookmarks/internal/bookmarks"
+	"bookmarks/internal/fetcher"
 	"bookmarks/internal/server"
 )
 
@@ -39,9 +40,12 @@ func run(ctx context.Context, cfg config, logger *log.Logger) error {
 	}
 	defer store.Close()
 
-	app := server.New(server.Config{
-		Store: store,
-		Token: cfg.Token,
+	pageFetcher := fetcher.NewFetcher(fetcher.Config{})
+
+	app := server.NewServer(server.Config{
+		Store:   store,
+		Token:   cfg.Token,
+		Fetcher: pageFetcher,
 	})
 
 	srv := newHTTPServer(cfg, app.Handler())
