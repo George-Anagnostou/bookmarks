@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"bookmarks/internal/bookmarks"
 )
@@ -90,6 +91,11 @@ func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	titleMissing := strings.TrimSpace(input.Title) == ""
+	if titleMissing {
+		input.Title = ""
+	}
+
 	bookmark, created, err := s.store.CreateBookmark(r.Context(), input)
 	if err != nil {
 		switch {
@@ -114,6 +120,10 @@ func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 		Bookmark: bookmark,
 		Created:  created,
 	})
+
+	if created && titleMissing {
+		s.fetchTitleAsync(bookmark.ID, bookmark.NormalizedURL)
+	}
 }
 
 func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request) {
@@ -287,4 +297,25 @@ func getListQuery(r *http.Request) (bookmarks.ListQuery, error) {
 		Limit:  limit,
 		Offset: offset,
 	}, nil
+}
+
+const titleFetchTimeout = 5 * time.Second
+
+func (s *Server) fetchTitleAsync(id, url string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), titleFetchTimeout)
+		defer cancel()
+
+		title, err := s.fetcher.FetchTitle(ctx, url)
+		if err != nil {
+			return
+		}
+
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return
+		}
+
+		_, _ = s.store.SetTitleIfBlank(ctx, id, title)
+	}()
 }

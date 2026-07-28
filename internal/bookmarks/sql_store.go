@@ -288,6 +288,29 @@ func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *SQLStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return false, nil
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE bookmarks
+		SET title = ?, updated_at = ?
+		WHERE id = ? AND TRIM(title) = ''
+	`, title, now.Format(time.RFC3339), id)
+	if err != nil {
+		return false, fmt.Errorf("set title if blank: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check title: %w", err)
+	}
+	return rows == 1, nil
+}
+
 func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL string) (Bookmark, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at

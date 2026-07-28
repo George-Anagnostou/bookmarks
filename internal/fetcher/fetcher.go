@@ -39,12 +39,15 @@ func (f *Fetcher) FetchTitle(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if err != nil {
-		return "", fmt.Errorf("error parsing content type")
-	}
-	if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
-		return "", fmt.Errorf("bad content type: %s", mediaType)
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "" {
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			return "", fmt.Errorf("parse content type: %w", err)
+		}
+		if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
+			return "", fmt.Errorf("unsupported content type: %s", mediaType)
+		}
 	}
 
 	limited := io.LimitReader(resp.Body, maxTitleBytes)
@@ -97,8 +100,8 @@ func findMetaOGTitle(n *html.Node) string {
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if got := findMetaOGTitle(c); got != "" {
-			return got
+		if title := findMetaOGTitle(c); title != "" {
+			return title
 		}
 	}
 
@@ -107,12 +110,15 @@ func findMetaOGTitle(n *html.Node) string {
 
 func findTitleText(n *html.Node) string {
 	if n.Type == html.ElementNode && n.Data == "title" {
-		return n.FirstChild.Data
+		if c := n.FirstChild; c != nil && c.Type == html.TextNode {
+			return n.FirstChild.Data
+		}
+		return ""
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if got := findTitleText(c); got != "" {
-			return got
+		if title := findTitleText(c); title != "" {
+			return title
 		}
 	}
 

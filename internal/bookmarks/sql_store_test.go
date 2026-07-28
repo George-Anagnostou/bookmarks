@@ -98,3 +98,89 @@ func TestSQLStorePersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("NormalizedURL = %q", got[0].NormalizedURL)
 	}
 }
+
+func TestSQLStoreSetTitleIfBlank(t *testing.T) {
+	tests := []struct {
+		name         string
+		storedTitle  string
+		fetchedTitle string
+		wantChanged  bool
+		wantTitle    string
+	}{
+		{
+			name:         "sets blank title",
+			fetchedTitle: "Fetched title",
+			wantChanged:  true,
+			wantTitle:    "Fetched title",
+		},
+		{
+			name:         "does not overwrite existing title",
+			storedTitle:  "Written by the user",
+			fetchedTitle: "Fetched title",
+			wantChanged:  false,
+			wantTitle:    "Written by the user",
+		},
+		{
+			name:         "ignores blank fetched title",
+			fetchedTitle: " \t ",
+			wantChanged:  false,
+			wantTitle:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+			if err != nil {
+				t.Fatalf("OpenSQLStore() error = %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+
+			bookmark, created, err := store.CreateBookmark(context.Background(), CreateInput{
+				URL:   "https://example.com/a",
+				Title: tt.storedTitle,
+			})
+			if err != nil {
+				t.Fatalf("CreateBookmark() error = %v", err)
+			}
+			if !created {
+				t.Fatal("CreateBookmark() created = false, want true")
+			}
+
+			changed, err := store.SetTitleIfBlank(context.Background(), bookmark.ID, tt.fetchedTitle)
+			if err != nil {
+				t.Fatalf("SetTitleIfBlank() error = %v", err)
+			}
+			if changed != tt.wantChanged {
+				t.Fatalf("SetTitleIfBlank() changed = %t, want %t", changed, tt.wantChanged)
+			}
+
+			bookmarks, err := store.ListBookmarks(context.Background(), ListQuery{})
+			if err != nil {
+				t.Fatalf("ListBookmarks() error = %v", err)
+			}
+			if len(bookmarks) != 1 {
+				t.Fatalf("ListBookmarks() returned %d bookmarks, want 1", len(bookmarks))
+			}
+			if bookmarks[0].Title != tt.wantTitle {
+				t.Fatalf("bookmark title = %q, want %q", bookmarks[0].Title, tt.wantTitle)
+			}
+		})
+	}
+}
+
+func TestSQLStoreSetTitleIfBlankMissingBookmarkIsNoOp(t *testing.T) {
+	store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	changed, err := store.SetTitleIfBlank(context.Background(), "missing", "Fetched title")
+	if err != nil {
+		t.Fatalf("SetTitleIfBlank() error = %v", err)
+	}
+	if changed {
+		t.Fatal("SetTitleIfBlank() changed = true, want false")
+	}
+}

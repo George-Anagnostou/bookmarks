@@ -58,6 +58,7 @@ type Store interface {
 	ListBookmarks(ctx context.Context, query ListQuery) ([]Bookmark, error)
 	UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error)
 	DeleteBookmark(ctx context.Context, id string) error
+	SetTitleIfBlank(ctx context.Context, id, title string) (bool, error)
 }
 
 func NormalizeURL(raw string) (string, error) {

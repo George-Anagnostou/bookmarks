@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -74,6 +75,151 @@ func TestCreateBookmark(t *testing.T) {
 	}
 	if got.Bookmark.ID != bookmark.ID {
 		t.Fatalf("bookmark ID = %q, want %q", got.Bookmark.ID, bookmark.ID)
+	}
+}
+
+func TestCreateBookmarkFetchesMissingTitle(t *testing.T) {
+	type titleUpdate struct {
+		id    string
+		title string
+	}
+	fetched := make(chan string, 1)
+	updated := make(chan titleUpdate, 1)
+
+	store := &fakeStore{
+		createBookmark: func(ctx context.Context, input bookmarks.CreateInput) (bookmarks.Bookmark, bool, error) {
+			if input.Title != "" {
+				t.Fatalf("input.Title = %q, want empty", input.Title)
+			}
+			return bookmarks.Bookmark{
+				ID:            "bookmark-1",
+				URL:           "https://example.com/a",
+				NormalizedURL: "https://example.com/a",
+			}, true, nil
+		},
+		setTitleIfBlank: func(ctx context.Context, id, title string) (bool, error) {
+			updated <- titleUpdate{id: id, title: title}
+			return true, nil
+		},
+	}
+	fetcher := &fakeFetcher{
+		fetchTitle: func(ctx context.Context, url string) (string, error) {
+			fetched <- url
+			return "  Fetched title  ", nil
+		},
+	}
+
+	handler := NewServer(Config{Store: store, Token: "test-token", Fetcher: fetcher}).Handler()
+	req := newJSONRequest(t, http.MethodPost, "/api/bookmarks", map[string]string{
+		"url": "https://example.com/a",
+	})
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	select {
+	case got := <-updated:
+		if got.id != "bookmark-1" {
+			t.Fatalf("updated ID = %q, want %q", got.id, "bookmark-1")
+		}
+		if got.title != "Fetched title" {
+			t.Fatalf("updated title = %q, want %q", got.title, "Fetched title")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for fetched title update")
+	}
+
+	select {
+	case got := <-fetched:
+		if got != "https://example.com/a" {
+			t.Fatalf("fetch URL = %q, want %q", got, "https://example.com/a")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for title fetch")
+	}
+}
+
+func TestCreateBookmarkFetchedTitleDoesNotOverwriteManualEdit(t *testing.T) {
+	store, err := bookmarks.OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	setTitleCalled := make(chan struct{}, 1)
+	notifyingStore := &titleUpdateNotifyingStore{
+		Store:          store,
+		setTitleCalled: setTitleCalled,
+	}
+	fetchStarted := make(chan struct{})
+	releaseFetch := make(chan struct{})
+	fetcher := &fakeFetcher{
+		fetchTitle: func(ctx context.Context, url string) (string, error) {
+			close(fetchStarted)
+			<-releaseFetch
+			return "Fetched title", nil
+		},
+	}
+
+	handler := NewServer(Config{Store: notifyingStore, Token: "test-token", Fetcher: fetcher}).Handler()
+	req := newJSONRequest(t, http.MethodPost, "/api/bookmarks", map[string]string{
+		"url": "https://example.com/a",
+	})
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("creating a bookmark waited for title fetching")
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var response createBookmarkResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	select {
+	case <-fetchStarted:
+	case <-time.After(time.Second):
+		t.Fatal("title fetch did not start")
+	}
+
+	manualTitle := "Written by the user"
+	if _, err := store.UpdateBookmark(context.Background(), response.Bookmark.ID, bookmarks.UpdateInput{Title: &manualTitle}); err != nil {
+		t.Fatalf("UpdateBookmark() error = %v", err)
+	}
+	close(releaseFetch)
+
+	select {
+	case <-setTitleCalled:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for fetched title update")
+	}
+
+	bookmarksList, err := store.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+	if err != nil {
+		t.Fatalf("ListBookmarks() error = %v", err)
+	}
+	if len(bookmarksList) != 1 {
+		t.Fatalf("ListBookmarks() returned %d bookmarks, want 1", len(bookmarksList))
+	}
+	if bookmarksList[0].Title != manualTitle {
+		t.Fatalf("bookmark title = %q, want %q", bookmarksList[0].Title, manualTitle)
 	}
 }
 
@@ -811,10 +957,22 @@ func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
 }
 
 type fakeStore struct {
-	createBookmark func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
-	listBookmarks  func(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
-	updateBookmark func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
-	deleteBookmark func(context.Context, string) error
+	createBookmark  func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
+	listBookmarks   func(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
+	updateBookmark  func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
+	deleteBookmark  func(context.Context, string) error
+	setTitleIfBlank func(context.Context, string, string) (bool, error)
+}
+
+type titleUpdateNotifyingStore struct {
+	bookmarks.Store
+	setTitleCalled chan<- struct{}
+}
+
+func (s *titleUpdateNotifyingStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
+	changed, err := s.Store.SetTitleIfBlank(ctx, id, title)
+	s.setTitleCalled <- struct{}{}
+	return changed, err
 }
 
 type fakeFetcher struct {
@@ -854,6 +1012,13 @@ func (s *fakeStore) DeleteBookmark(ctx context.Context, id string) error {
 		panic("unexpected DeleteBookmark call")
 	}
 	return s.deleteBookmark(ctx, id)
+}
+
+func (s *fakeStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
+	if s.setTitleIfBlank == nil {
+		panic("undexpected SetTitleIfBlank call")
+	}
+	return s.setTitleIfBlank(ctx, id, title)
 }
 
 func newJSONRequest(t *testing.T, method string, path string, body any) *http.Request {
