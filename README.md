@@ -38,7 +38,9 @@ go run ./cmd/bookmarkctl list
 
 ```sh
 make test          # run all tests
-make build-cli     # install bookmarkctl locally
+make check         # formatting, script syntax, tests, vet, and race tests
+make build-cli     # build bookmarkctl into dist/
+make install-cli   # install bookmarkctl locally
 make build-server  # cross-compile bookmarkd for Linux
 ```
 
@@ -48,7 +50,8 @@ make build-server  # cross-compile bookmarkd for Linux
 cp .env.deploy.example .env.deploy
 # set BOOKMARKS_DOMAIN and BOOKMARKS_DEPLOY_HOST
 
-make update          # test, build, deploy, verify /healthz
+make update          # check, build, install CLI, deploy server, verify /healthz
+make verify          # verify the deployed server health endpoint
 make rollback        # restore previous bookmarkd binary
 make install-backups # install daily SQLite backups on the VPS
 ```

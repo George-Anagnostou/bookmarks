@@ -43,10 +43,17 @@ cp .env.deploy.example .env.deploy
 make update
 ```
 
-`make update` runs tests, builds `bookmarkctl` and a Linux `bookmarkd` binary,
-copies the binary to the VPS, runs a pre-deploy backup if the database exists,
-preserves the previous binary as `.previous`, restarts systemd, and curls public
+`make update` runs formatting, shell syntax, tests, vet, and race checks; builds
+and installs the local `bookmarkctl`; builds a Linux `bookmarkd` binary; copies
+the server binary to the VPS; runs a pre-deploy backup if the database exists;
+preserves the previous binary as `.previous`; restarts systemd; and curls public
 `/healthz`.
+
+To verify an already deployed server without building or deploying:
+
+```sh
+make verify
+```
 
 Rollback:
 
