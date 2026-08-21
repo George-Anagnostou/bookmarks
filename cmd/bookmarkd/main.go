@@ -24,12 +24,13 @@ func main() {
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 
-	if err := run(ctx, cfg, logger); err != nil {
+	pageFetcher := fetcher.NewFetcher(fetcher.Config{})
+	if err := run(ctx, cfg, logger, pageFetcher); err != nil {
 		logger.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, cfg config, logger *log.Logger) error {
+func run(ctx context.Context, cfg config, logger *log.Logger, pageFetcher server.Fetcher) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
 		return err
 	}
@@ -39,8 +40,6 @@ func run(ctx context.Context, cfg config, logger *log.Logger) error {
 		return err
 	}
 	defer store.Close()
-
-	pageFetcher := fetcher.NewFetcher(fetcher.Config{})
 
 	app := server.NewServer(server.Config{
 		Store:   store,

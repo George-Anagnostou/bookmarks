@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -14,7 +15,10 @@ import (
 
 	"bookmarks/internal/apiclient"
 	"bookmarks/internal/bookmarks"
+	"bookmarks/internal/fetcher"
 )
+
+const titleFallbackTestURL = "http://public.test/"
 
 func TestBookmarkdFetchesTitleAfterCreatingBookmark(t *testing.T) {
 	fetchStarted := make(chan struct{})
@@ -34,7 +38,7 @@ func TestBookmarkdFetchesTitleAfterCreatingBookmark(t *testing.T) {
 		page.Close()
 	}()
 
-	client := startBookmarkdForTitleFallbackTest(t)
+	client := startBookmarkdForTitleFallbackTest(t, page)
 
 	type createResult struct {
 		bookmark bookmarks.Bookmark
@@ -43,7 +47,7 @@ func TestBookmarkdFetchesTitleAfterCreatingBookmark(t *testing.T) {
 	}
 	resultc := make(chan createResult, 1)
 	go func() {
-		bookmark, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: page.URL})
+		bookmark, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: titleFallbackTestURL})
 		resultc <- createResult{bookmark: bookmark, created: created, err: err}
 	}()
 
@@ -77,9 +81,9 @@ func TestBookmarkdFetchesTitleForWhitespaceInput(t *testing.T) {
 	}))
 	defer page.Close()
 
-	client := startBookmarkdForTitleFallbackTest(t)
+	client := startBookmarkdForTitleFallbackTest(t, page)
 	bookmark, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{
-		URL:   page.URL,
+		URL:   titleFallbackTestURL,
 		Title: " \t ",
 	})
 	if err != nil {
@@ -102,9 +106,9 @@ func TestBookmarkdDoesNotFetchTitleWhenProvided(t *testing.T) {
 	}))
 	defer page.Close()
 
-	client := startBookmarkdForTitleFallbackTest(t)
+	client := startBookmarkdForTitleFallbackTest(t, page)
 	bookmark, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{
-		URL:   page.URL,
+		URL:   titleFallbackTestURL,
 		Title: "Written by the user",
 	})
 	if err != nil {
@@ -134,9 +138,9 @@ func TestBookmarkdDoesNotFetchTitleForDuplicateBookmark(t *testing.T) {
 	}))
 	defer page.Close()
 
-	client := startBookmarkdForTitleFallbackTest(t)
+	client := startBookmarkdForTitleFallbackTest(t, page)
 	first, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{
-		URL:   page.URL,
+		URL:   titleFallbackTestURL,
 		Title: "Original title",
 	})
 	if err != nil {
@@ -146,7 +150,7 @@ func TestBookmarkdDoesNotFetchTitleForDuplicateBookmark(t *testing.T) {
 		t.Fatal("first CreateBookmark() created = false, want true")
 	}
 
-	second, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: page.URL})
+	second, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: titleFallbackTestURL})
 	if err != nil {
 		t.Fatalf("second CreateBookmark() error = %v", err)
 	}
@@ -185,8 +189,8 @@ func TestBookmarkdFetchedTitleDoesNotOverwriteManualEdit(t *testing.T) {
 		page.Close()
 	}()
 
-	client := startBookmarkdForTitleFallbackTest(t)
-	bookmark, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: page.URL})
+	client := startBookmarkdForTitleFallbackTest(t, page)
+	bookmark, created, err := client.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: titleFallbackTestURL})
 	if err != nil {
 		t.Fatalf("CreateBookmark() error = %v", err)
 	}
@@ -209,7 +213,7 @@ func TestBookmarkdFetchedTitleDoesNotOverwriteManualEdit(t *testing.T) {
 	assertBookmarkTitleRemains(t, client, bookmark.ID, manualTitle)
 }
 
-func startBookmarkdForTitleFallbackTest(t *testing.T) *apiclient.Client {
+func startBookmarkdForTitleFallbackTest(t *testing.T, page *httptest.Server) *apiclient.Client {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -228,7 +232,7 @@ func startBookmarkdForTitleFallbackTest(t *testing.T) *apiclient.Client {
 			Addr:   addr,
 			DBPath: filepath.Join(t.TempDir(), "bookmarks.db"),
 			Token:  "test-token",
-		}, log.New(io.Discard, "", 0))
+		}, log.New(io.Discard, "", 0), fetcherForTestPage(page))
 	}()
 
 	t.Cleanup(func() {
@@ -267,6 +271,17 @@ func startBookmarkdForTitleFallbackTest(t *testing.T) *apiclient.Client {
 	}
 	t.Fatal("bookmarkd did not become healthy")
 	return nil
+}
+
+func fetcherForTestPage(page *httptest.Server) *fetcher.Fetcher {
+	return fetcher.NewFetcher(fetcher.Config{
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
+		},
+	})
 }
 
 func waitForBookmarkTitle(t *testing.T, client *apiclient.Client, id, wantTitle string) {

@@ -3,10 +3,13 @@ package fetcher
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -15,8 +18,11 @@ import (
 // Max Title bytes to read. Intended to limit reads for title extraction.
 const maxTitleBytes = 32 * 1024
 
+var ErrBlockedTarget = errors.New("blocked target")
+
 type Config struct {
-	HTTPClient *http.Client
+	LookupNetIP func(context.Context, string, string) ([]netip.Addr, error)
+	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 type Fetcher struct {
@@ -73,11 +79,88 @@ func (f *Fetcher) FetchTitle(ctx context.Context, url string) (string, error) {
 }
 
 func NewFetcher(cfg Config) *Fetcher {
-	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
+	lookup := cfg.LookupNetIP
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupNetIP
 	}
-	return &Fetcher{httpClient: httpClient}
+
+	dial := cfg.DialContext
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialValidatedTarget(ctx, network, address, lookup, dial)
+	}
+
+	return &Fetcher{httpClient: &http.Client{Transport: transport}}
+}
+
+func dialValidatedTarget(
+	ctx context.Context,
+	network string,
+	address string,
+	lookup func(context.Context, string, string) ([]netip.Addr, error),
+	dial func(context.Context, string, string) (net.Conn, error),
+) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("split target address: %w", err)
+	}
+
+	ip, err := netip.ParseAddr(host)
+	if err == nil {
+		if isUnsafeAddress(ip) {
+			return nil, ErrBlockedTarget
+		}
+
+		return dial(ctx, network, net.JoinHostPort(ip.String(), port))
+	}
+
+	// hostname handling
+	addresses, err := lookup(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve target: %w", err)
+	}
+
+	if len(addresses) == 0 {
+		return nil, ErrBlockedTarget
+	}
+
+	for _, addr := range addresses {
+		if isUnsafeAddress(addr) {
+			return nil, ErrBlockedTarget
+		}
+	}
+
+	selected := addresses[0].Unmap()
+
+	return dial(ctx, network, net.JoinHostPort(selected.String(), port))
+}
+
+func isUnsafeAddress(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	switch {
+	case !addr.IsValid():
+		return true
+	case addr.Zone() != "":
+		return true
+	case addr.IsUnspecified():
+		return true
+	case addr.IsLoopback():
+		return true
+	case addr.IsPrivate():
+		return true
+	case addr.IsLinkLocalUnicast():
+		return true
+	case addr.IsMulticast():
+		return true
+	default:
+		return false
+	}
 }
 
 func findMetaOGTitle(n *html.Node) string {

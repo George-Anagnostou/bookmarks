@@ -2,12 +2,17 @@ package fetcher
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 )
+
+const testPageURL = "http://public.test/"
 
 func TestFetchTitlePrefersOGTitle(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -16,8 +21,8 @@ func TestFetchTitlePrefersOGTitle(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,8 +38,8 @@ func TestFetchTitleFallsBackToTitleTag(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,8 +55,8 @@ func TestFetchTitleReturnsEmptyWhenNoTitle(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,10 +66,19 @@ func TestFetchTitleReturnsEmptyWhenNoTitle(t *testing.T) {
 }
 
 func TestFetchTitleReturnsErrorForUnreachable(t *testing.T) {
-	f := NewFetcher(Config{})
-	_, err := f.FetchTitle(context.Background(), "http://127.0.0.1:1")
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	dialErr := errors.New("unreachable")
+	f := NewFetcher(Config{
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		},
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			return nil, dialErr
+		},
+	})
+
+	_, err := f.FetchTitle(context.Background(), testPageURL)
+	if !errors.Is(err, dialErr) {
+		t.Fatalf("FetchTitle() error = %v, want wrapped dial error", err)
 	}
 }
 
@@ -78,10 +92,10 @@ func TestFetchTitleRespectsContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	f := NewFetcher(Config{})
-	_, err := f.FetchTitle(ctx, s.URL)
-	if err == nil {
-		t.Fatal("expected context error, got nil")
+	f := fetcherForTestServer(t, s)
+	_, err := f.FetchTitle(ctx, testPageURL)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("FetchTitle() error = %v, want context deadline exceeded", err)
 	}
 }
 
@@ -93,8 +107,8 @@ func TestFetchTitleNon200ReturnsError(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	_, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	_, err := f.FetchTitle(context.Background(), testPageURL)
 	if err == nil {
 		t.Fatal("expected error for non-200, got nil")
 	}
@@ -108,8 +122,8 @@ func TestFetchTitleRespectsMaxBytesLimit(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,8 +139,8 @@ func TestFetchTitleTrimsWhitespaceInOGTitle(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,8 +156,8 @@ func TestFetchTitleFallsBackWhenOGTitleIsWhitespace(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,8 +173,8 @@ func TestFetchTitleEmptyOrWhitespaceTitleReturnsEmpty(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,8 +190,8 @@ func TestFetchTitleFirstOGTitleWins(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,12 +207,25 @@ func TestFetchTitleOGViaNameAttribute(t *testing.T) {
 	}))
 	defer s.Close()
 
-	f := NewFetcher(Config{})
-	title, err := f.FetchTitle(context.Background(), s.URL)
+	f := fetcherForTestServer(t, s)
+	title, err := f.FetchTitle(context.Background(), testPageURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if title != "Name OG" {
 		t.Fatalf("title = %q, want %q (name=og:title fallback desired)", title, "Name OG")
 	}
+}
+
+func fetcherForTestServer(t *testing.T, s *httptest.Server) *Fetcher {
+	t.Helper()
+
+	return NewFetcher(Config{
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, s.Listener.Addr().String())
+		},
+	})
 }

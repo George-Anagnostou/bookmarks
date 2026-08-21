@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"strings"
 	"testing"
 )
 
@@ -31,7 +30,6 @@ func TestFetchTitleRejectsUnsafeLiteralAddresses(t *testing.T) {
 			resolverCalled := false
 			dialCalled := false
 			f := NewFetcher(Config{
-				HTTPClient: noNetworkHTTPClient(),
 				LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
 					resolverCalled = true
 					return nil, errors.New("literal address must not be resolved")
@@ -71,10 +69,11 @@ func TestFetchTitleRejectsHostnamesResolvingToUnsafeAddresses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			resolverCalled := false
 			dialCalled := false
 			f := NewFetcher(Config{
-				HTTPClient: noNetworkHTTPClient(),
 				LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+					resolverCalled = true
 					return []netip.Addr{netip.MustParseAddr(tt.addr)}, nil
 				},
 				DialContext: func(context.Context, string, string) (net.Conn, error) {
@@ -87,6 +86,9 @@ func TestFetchTitleRejectsHostnamesResolvingToUnsafeAddresses(t *testing.T) {
 			if !errors.Is(err, ErrBlockedTarget) {
 				t.Fatalf("FetchTitle() error = %v, want %v", err, ErrBlockedTarget)
 			}
+			if !resolverCalled {
+				t.Fatal("hostname was not resolved")
+			}
 			if dialCalled {
 				t.Fatal("unsafe resolved address was dialed")
 			}
@@ -95,10 +97,11 @@ func TestFetchTitleRejectsHostnamesResolvingToUnsafeAddresses(t *testing.T) {
 }
 
 func TestFetchTitleRejectsHostnameWhenAnyResolvedAddressIsUnsafe(t *testing.T) {
+	resolverCalled := false
 	dialCalled := false
 	f := NewFetcher(Config{
-		HTTPClient: noNetworkHTTPClient(),
 		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			resolverCalled = true
 			return []netip.Addr{
 				netip.MustParseAddr("93.184.216.34"),
 				netip.MustParseAddr("127.0.0.1"),
@@ -114,6 +117,9 @@ func TestFetchTitleRejectsHostnameWhenAnyResolvedAddressIsUnsafe(t *testing.T) {
 	if !errors.Is(err, ErrBlockedTarget) {
 		t.Fatalf("FetchTitle() error = %v, want %v", err, ErrBlockedTarget)
 	}
+	if !resolverCalled {
+		t.Fatal("hostname was not resolved")
+	}
 	if dialCalled {
 		t.Fatal("hostname with an unsafe DNS result was dialed")
 	}
@@ -121,10 +127,11 @@ func TestFetchTitleRejectsHostnameWhenAnyResolvedAddressIsUnsafe(t *testing.T) {
 
 func TestFetchTitleFailsClosedWhenHostnameCannotBeResolved(t *testing.T) {
 	resolverErr := errors.New("DNS unavailable")
+	resolverCalled := false
 	dialCalled := false
 	f := NewFetcher(Config{
-		HTTPClient: noNetworkHTTPClient(),
 		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			resolverCalled = true
 			return nil, resolverErr
 		},
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
@@ -137,16 +144,20 @@ func TestFetchTitleFailsClosedWhenHostnameCannotBeResolved(t *testing.T) {
 	if !errors.Is(err, resolverErr) {
 		t.Fatalf("FetchTitle() error = %v, want wrapped resolver error", err)
 	}
+	if !resolverCalled {
+		t.Fatal("hostname was not resolved")
+	}
 	if dialCalled {
 		t.Fatal("hostname was dialed after DNS failure")
 	}
 }
 
 func TestFetchTitleFailsClosedWhenHostnameHasNoAddresses(t *testing.T) {
+	resolverCalled := false
 	dialCalled := false
 	f := NewFetcher(Config{
-		HTTPClient: noNetworkHTTPClient(),
 		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			resolverCalled = true
 			return nil, nil
 		},
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
@@ -156,8 +167,11 @@ func TestFetchTitleFailsClosedWhenHostnameHasNoAddresses(t *testing.T) {
 	})
 
 	_, err := f.FetchTitle(context.Background(), "http://empty.test/")
-	if err == nil {
-		t.Fatal("FetchTitle() error = nil, want failure")
+	if !errors.Is(err, ErrBlockedTarget) {
+		t.Fatalf("FetchTitle() error = %v, want %v", err, ErrBlockedTarget)
+	}
+	if !resolverCalled {
+		t.Fatal("hostname was not resolved")
 	}
 	if dialCalled {
 		t.Fatal("hostname was dialed without a DNS address")
@@ -173,7 +187,6 @@ func TestFetchTitleAllowsPublicHostnameWithoutDialingTheHostname(t *testing.T) {
 
 	var dialedAddress string
 	f := NewFetcher(Config{
-		HTTPClient: routedHTTPClient(page),
 		LookupNetIP: func(ctx context.Context, network, host string) ([]netip.Addr, error) {
 			if network != "ip" || host != "public.test" {
 				t.Fatalf("LookupNetIP() arguments = (%q, %q), want (ip, public.test)", network, host)
@@ -182,9 +195,6 @@ func TestFetchTitleAllowsPublicHostnameWithoutDialingTheHostname(t *testing.T) {
 		},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			dialedAddress = address
-			if strings.HasPrefix(address, "public.test:") {
-				return nil, errors.New("dialed hostname instead of validated address")
-			}
 			return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
 		},
 	})
@@ -291,7 +301,6 @@ func TestFetchTitleRejectsUnsupportedScheme(t *testing.T) {
 	resolverCalled := false
 	dialCalled := false
 	f := NewFetcher(Config{
-		HTTPClient: noNetworkHTTPClient(),
 		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
 			resolverCalled = true
 			return nil, errors.New("unexpected lookup")
@@ -315,7 +324,6 @@ func fetcherForRedirectTest(t *testing.T, page *httptest.Server, addresses map[s
 	t.Helper()
 
 	f := NewFetcher(Config{
-		HTTPClient: routedHTTPClient(page),
 		LookupNetIP: func(ctx context.Context, network, host string) ([]netip.Addr, error) {
 			resolved, ok := addresses[host]
 			if !ok {
@@ -328,22 +336,4 @@ func fetcherForRedirectTest(t *testing.T, page *httptest.Server, addresses map[s
 		},
 	})
 	return f
-}
-
-func noNetworkHTTPClient() *http.Client {
-	return &http.Client{Transport: &http.Transport{
-		Proxy: nil,
-		DialContext: func(context.Context, string, string) (net.Conn, error) {
-			return nil, errors.New("unexpected network request")
-		},
-	}}
-}
-
-func routedHTTPClient(page *httptest.Server) *http.Client {
-	return &http.Client{Transport: &http.Transport{
-		Proxy: nil,
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
-		},
-	}}
 }
