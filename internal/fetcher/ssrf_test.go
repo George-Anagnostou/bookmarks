@@ -2,12 +2,14 @@ package fetcher
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"testing"
+	"time"
 )
 
 func TestFetchTitleRejectsUnsafeLiteralAddresses(t *testing.T) {
@@ -86,6 +88,42 @@ func TestFetchTitleAllowsPublicLiteralAddressWithoutResolving(t *testing.T) {
 	}
 	if dialedAddress != "93.184.216.34:80" {
 		t.Fatalf("dialed address = %q, want public literal address", dialedAddress)
+	}
+}
+
+func TestFetchTitleRejectsLiteralAddressOnNonWebPort(t *testing.T) {
+	dialCalled := false
+	f := NewFetcher(Config{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			dialCalled = true
+			return nil, errors.New("unexpected dial")
+		},
+	})
+
+	_, err := f.FetchTitle(context.Background(), "http://93.184.216.34:8080/")
+	if !errors.Is(err, ErrBlockedTarget) {
+		t.Fatalf("FetchTitle() error = %v, want %v", err, ErrBlockedTarget)
+	}
+	if dialCalled {
+		t.Fatal("non-web port was dialed")
+	}
+}
+
+func TestFetchTitleRejectsHostnameOnNonWebPortBeforeResolving(t *testing.T) {
+	resolverCalled := false
+	f := NewFetcher(Config{
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			resolverCalled = true
+			return nil, errors.New("unexpected lookup")
+		},
+	})
+
+	_, err := f.FetchTitle(context.Background(), "http://public.test:8080/")
+	if !errors.Is(err, ErrBlockedTarget) {
+		t.Fatalf("FetchTitle() error = %v, want %v", err, ErrBlockedTarget)
+	}
+	if resolverCalled {
+		t.Fatal("hostname was resolved for a blocked port")
 	}
 }
 
@@ -273,6 +311,72 @@ func TestFetchTitleDialsValidatedIPv6Address(t *testing.T) {
 	}
 	if dialedAddress != "[2001:4860:4860::8888]:80" {
 		t.Fatalf("dialed address = %q, want bracketed IPv6 address", dialedAddress)
+	}
+}
+
+func TestFetchTitleAllowsHTTPSWithValidatedAddress(t *testing.T) {
+	page := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<title>HTTPS page</title>`))
+	}))
+	defer page.Close()
+
+	var dialedAddress string
+	f := NewFetcher(Config{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // test server cert is not for public.test.
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialedAddress = address
+			return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
+		},
+	})
+
+	title, err := f.FetchTitle(context.Background(), "https://public.test/article")
+	if err != nil {
+		t.Fatalf("FetchTitle() error = %v", err)
+	}
+	if title != "HTTPS page" {
+		t.Fatalf("FetchTitle() title = %q, want %q", title, "HTTPS page")
+	}
+	if dialedAddress != "93.184.216.34:443" {
+		t.Fatalf("dialed address = %q, want validated HTTPS address", dialedAddress)
+	}
+}
+
+func TestFetchTitleTimesOutWhileWaitingForResponse(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = w.Write([]byte(`<title>Too late</title>`))
+	}))
+	defer page.Close()
+
+	f := fetcherForTestServerWithTimeout(t, page, 20*time.Millisecond)
+	_, err := f.FetchTitle(context.Background(), "http://public.test/")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("FetchTitle() error = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestIsUnsafeAddressRejectsSpecialPurposeRanges(t *testing.T) {
+	tests := []string{
+		"0.0.0.1",
+		"100.64.0.1",
+		"192.0.0.1",
+		"192.0.2.1",
+		"198.18.0.1",
+		"198.51.100.1",
+		"203.0.113.1",
+		"2001:db8::1",
+	}
+
+	for _, address := range tests {
+		t.Run(address, func(t *testing.T) {
+			if !isUnsafeAddress(netip.MustParseAddr(address)) {
+				t.Fatalf("isUnsafeAddress(%q) = false, want true", address)
+			}
+		})
 	}
 }
 

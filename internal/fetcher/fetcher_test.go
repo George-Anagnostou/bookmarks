@@ -218,9 +218,14 @@ func TestFetchTitleOGViaNameAttribute(t *testing.T) {
 }
 
 func fetcherForTestServer(t *testing.T, s *httptest.Server) *Fetcher {
+	return fetcherForTestServerWithTimeout(t, s, 0)
+}
+
+func fetcherForTestServerWithTimeout(t *testing.T, s *httptest.Server, timeout time.Duration) *Fetcher {
 	t.Helper()
 
 	return NewFetcher(Config{
+		Timeout: timeout,
 		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
 			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
 		},
