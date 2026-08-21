@@ -38,6 +38,10 @@ Response `200`:
 If the normalized URL already exists, returns the existing bookmark with
 `"created": false`.
 
+When a new bookmark has no title, the server asynchronously attempts to fetch
+one from the page. The create response may therefore contain an empty title;
+the bookmark will be updated if a usable title is found.
+
 Validation errors return `400`. Duplicate URL on update returns `409`.
 
 ## List bookmarks

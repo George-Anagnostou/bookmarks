@@ -7,32 +7,57 @@
 - `bookmarkctl list` output formats (table, tsv, json)
 - Deploy, rollback, and daily VPS backups
 - iOS Shortcut for saving URLs (manual setup)
+- SSRF-safe title fetching for bookmarks saved without titles
 
 ## Next
 
-Priorities reflect current goals: mobile retrieval and desktop hotkey integration.
-
 ### CLI UX
 
-- Hammerspoon or hotkey wrapper around `bookmarkctl`
+- Polish terminal appearance and output.
+- Improve table sizing, truncation, timestamps, colors, and error messages.
+- Add an `open` workflow for quickly opening a bookmark.
+- Support clipboard and stdin capture improvements.
+- Support multiple CLI configuration profiles.
 
-### Mobile reading
+### Mobile
 
-- iPhone Shortcut for search-and-open (calls list API)
-- RSS/Atom feed for recent bookmarks in a feed reader
-- Optional HTML index if feeds and shortcuts are not enough
+- Explore mobile-friendly retrieval and interaction options.
+- Keep the direction open while evaluating Shortcuts, a lightweight web UI, PWA
+  behavior, and feeds.
 
 ### Operations
 
-- Offsite backup copy to a trusted machine (`rsync` pull)
-- Restore drill documented as a recurring habit
-- Optional deploy-user instead of root SSH
+- Offsite backup copy to a trusted machine (`rsync` pull).
+- Restore drill documented as a recurring habit.
+- Optional deploy-user instead of root SSH.
 
-### Later
+## Later
 
-- Per-device revocable tokens (replace single shared bearer token)
-- Tags support in store and API
-- Title fetching for bookmarks saved without titles
+### Device Access
+
+- Replace the shared bearer token with per-device revocable tokens.
+- Support device names, expiration, last-used tracking, and local CLI profiles.
+- Consider one-time pairing or QR-based enrollment.
+- Keep this low priority until the main usability work is complete.
+
+### Ideas: Capture
+
+- Browser extension or bookmarklet.
+- Better mobile share-sheet support.
+- Automatic source and device metadata.
+- Browser bookmark import.
+- Bulk import with duplicate reporting.
+- Optional note prompt during capture.
+
+### Ideas: Retrieval
+
+- Tags and tag-based filtering.
+- Archive and read/unread states.
+- Search filters for tags, sources, and date ranges.
+- Saved views such as recent, unread, and untagged.
+- Improved result ordering.
+- Bulk archive, tagging, and deletion.
+- JSON, TSV, and portable database export.
 
 ## Constraints
 
@@ -40,4 +65,3 @@ Priorities reflect current goals: mobile retrieval and desktop hotkey integratio
 - Private by default; no third-party services required
 - Keep capture and retrieval friction low
 - Prefer simple scripts over heavy automation
-
