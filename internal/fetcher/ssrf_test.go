@@ -54,6 +54,41 @@ func TestFetchTitleRejectsUnsafeLiteralAddresses(t *testing.T) {
 	}
 }
 
+func TestFetchTitleAllowsPublicLiteralAddressWithoutResolving(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<title>Public page</title>`))
+	}))
+	defer page.Close()
+
+	resolverCalled := false
+	var dialedAddress string
+	f := NewFetcher(Config{
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			resolverCalled = true
+			return nil, errors.New("literal address must not be resolved")
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialedAddress = address
+			return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
+		},
+	})
+
+	title, err := f.FetchTitle(context.Background(), "http://93.184.216.34/article")
+	if err != nil {
+		t.Fatalf("FetchTitle() error = %v", err)
+	}
+	if title != "Public page" {
+		t.Fatalf("FetchTitle() title = %q, want %q", title, "Public page")
+	}
+	if resolverCalled {
+		t.Fatal("resolver was called for a literal address")
+	}
+	if dialedAddress != "93.184.216.34:80" {
+		t.Fatalf("dialed address = %q, want public literal address", dialedAddress)
+	}
+}
+
 func TestFetchTitleRejectsHostnamesResolvingToUnsafeAddresses(t *testing.T) {
 	tests := []struct {
 		name string
@@ -208,6 +243,36 @@ func TestFetchTitleAllowsPublicHostnameWithoutDialingTheHostname(t *testing.T) {
 	}
 	if dialedAddress != "93.184.216.34:80" {
 		t.Fatalf("dialed address = %q, want validated public address", dialedAddress)
+	}
+}
+
+func TestFetchTitleDialsValidatedIPv6Address(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<title>IPv6 page</title>`))
+	}))
+	defer page.Close()
+
+	var dialedAddress string
+	f := NewFetcher(Config{
+		LookupNetIP: func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("2001:4860:4860::8888")}, nil
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialedAddress = address
+			return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
+		},
+	})
+
+	title, err := f.FetchTitle(context.Background(), "http://ipv6.test/article")
+	if err != nil {
+		t.Fatalf("FetchTitle() error = %v", err)
+	}
+	if title != "IPv6 page" {
+		t.Fatalf("FetchTitle() title = %q, want %q", title, "IPv6 page")
+	}
+	if dialedAddress != "[2001:4860:4860::8888]:80" {
+		t.Fatalf("dialed address = %q, want bracketed IPv6 address", dialedAddress)
 	}
 }
 

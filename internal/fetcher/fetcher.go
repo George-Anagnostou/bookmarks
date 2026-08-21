@@ -35,6 +35,10 @@ func (f *Fetcher) FetchTitle(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("create request: %w", err)
 	}
 
+	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+		return "", fmt.Errorf("unsupported scheme: %s", req.URL.Scheme)
+	}
+
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("send request: %w", err)
@@ -113,6 +117,7 @@ func dialValidatedTarget(
 
 	ip, err := netip.ParseAddr(host)
 	if err == nil {
+		ip = ip.Unmap()
 		if isUnsafeAddress(ip) {
 			return nil, ErrBlockedTarget
 		}
@@ -120,7 +125,6 @@ func dialValidatedTarget(
 		return dial(ctx, network, net.JoinHostPort(ip.String(), port))
 	}
 
-	// hostname handling
 	addresses, err := lookup(ctx, "ip", host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve target: %w", err)
