@@ -140,6 +140,14 @@ func runList(
 		return err
 	}
 
+	width := 0
+	if format == ListFormatTable && isTerminal(stdout) {
+		width, err = terminalWidth(stdout)
+		if err != nil {
+			return fmt.Errorf("could not get terminal width: %w", err)
+		}
+	}
+
 	if *long && format != ListFormatTable {
 		return fmt.Errorf("-l is only valid with table output")
 	}
@@ -158,6 +166,7 @@ func runList(
 	listFormatOptions := ListFormatOptions{
 		Format: format,
 		Long:   *long,
+		Width:  width,
 	}
 
 	client, err := newClient(apiclient.Config{

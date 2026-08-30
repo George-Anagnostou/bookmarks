@@ -140,6 +140,104 @@ func TestWriteListTable(t *testing.T) {
 	}
 }
 
+func TestWriteListTableFitsTerminalWidth(t *testing.T) {
+	bookmarkList := []bookmarks.Bookmark{
+		{
+			Title: "A bookmark with a deliberately long title",
+			URL:   "https://example.com/a/very/long/path/that/should/not/wrap",
+		},
+		{
+			Title: "Another long bookmark title",
+			URL:   "https://example.org/another/very/long/path",
+		},
+	}
+
+	var buf bytes.Buffer
+	err := WriteListBookmarks(&buf, bookmarkList, ListFormatOptions{
+		Format: ListFormatTable,
+		Width:  48,
+	})
+	if err != nil {
+		t.Fatalf("WriteListBookmarks() error = %v", err)
+	}
+
+	output := strings.TrimSuffix(buf.String(), "\n")
+	lines := strings.Split(output, "\n")
+	if len(lines) != len(bookmarkList)+1 {
+		t.Fatalf("printed %d lines, want header plus %d rows: %q", len(lines), len(bookmarkList), output)
+	}
+
+	for _, line := range lines {
+		if len([]rune(line)) > 48 {
+			t.Errorf("line has %d characters, want at most 48: %q", len([]rune(line)), line)
+		}
+	}
+
+	if !strings.Contains(output, "...") {
+		t.Fatalf("long table output should indicate truncated content: %q", output)
+	}
+	if strings.Contains(output, "https://example.com/a/very/long/path/that/should/not/wrap") {
+		t.Fatalf("long URL should not be printed in full: %q", output)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		width int
+		want  string
+	}{
+		{name: "short value", value: "hello", width: 10, want: "hello"},
+		{name: "exact width", value: "hello", width: 5, want: "hello"},
+		{name: "long value", value: "hello world", width: 8, want: "hello..."},
+		{name: "width equals marker", value: "hello", width: 3, want: "..."},
+		{name: "narrow width", value: "hello", width: 2, want: ".."},
+		{name: "empty width", value: "hello", width: 0, want: ""},
+		{name: "does not split utf8", value: "café au lait", width: 7, want: "café..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := truncate(tt.value, tt.width); got != tt.want {
+				t.Fatalf("truncate(%q, %d) = %q, want %q", tt.value, tt.width, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteListMachineFormatsIgnoreTerminalWidth(t *testing.T) {
+	bookmarkList := sampleListBookmarksLong()
+
+	var tsvWithoutWidth, tsvWithWidth bytes.Buffer
+	if err := WriteListBookmarks(&tsvWithoutWidth, bookmarkList, ListFormatOptions{Format: ListFormatTSV}); err != nil {
+		t.Fatalf("WriteListBookmarks() TSV error = %v", err)
+	}
+	if err := WriteListBookmarks(&tsvWithWidth, bookmarkList, ListFormatOptions{
+		Format: ListFormatTSV,
+		Width:  20,
+	}); err != nil {
+		t.Fatalf("WriteListBookmarks() TSV with width error = %v", err)
+	}
+	if tsvWithWidth.String() != tsvWithoutWidth.String() {
+		t.Fatalf("terminal width changed TSV output:\nwithout width: %q\nwith width: %q", tsvWithoutWidth.String(), tsvWithWidth.String())
+	}
+
+	var jsonWithoutWidth, jsonWithWidth bytes.Buffer
+	if err := WriteListBookmarks(&jsonWithoutWidth, bookmarkList, ListFormatOptions{Format: ListFormatJSON}); err != nil {
+		t.Fatalf("WriteListBookmarks() JSON error = %v", err)
+	}
+	if err := WriteListBookmarks(&jsonWithWidth, bookmarkList, ListFormatOptions{
+		Format: ListFormatJSON,
+		Width:  20,
+	}); err != nil {
+		t.Fatalf("WriteListBookmarks() JSON with width error = %v", err)
+	}
+	if jsonWithWidth.String() != jsonWithoutWidth.String() {
+		t.Fatalf("terminal width changed JSON output:\nwithout width: %q\nwith width: %q", jsonWithoutWidth.String(), jsonWithWidth.String())
+	}
+}
+
 func TestWriteListTableAlignsColumns(t *testing.T) {
 	bookmarkList := []bookmarks.Bookmark{
 		{
