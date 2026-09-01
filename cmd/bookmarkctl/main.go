@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -21,6 +22,12 @@ func main() {
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+
+		var usageErr *usageError
+		if errors.As(err, &usageErr) {
+			usageErr.usage(os.Stderr)
+		}
+
 		os.Exit(1)
 	}
 }

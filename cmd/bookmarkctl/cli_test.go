@@ -30,6 +30,33 @@ func TestRunRequiresCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("run() error = nil, want error")
 	}
+
+	var usageErr *usageError
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("run() error = %T, want *usageError", err)
+	}
+
+	var gotUsage bytes.Buffer
+	usageErr.usage(&gotUsage)
+
+	var wantUsage bytes.Buffer
+	err = run(
+		context.Background(),
+		[]string{"--help"},
+		mapLookup(nil),
+		&wantUsage,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			t.Fatal("newClient should not be called")
+			return nil, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("root help run() error = %v, want nil", err)
+	}
+	if got, want := gotUsage.String(), wantUsage.String(); got != want {
+		t.Fatalf("usage = %q, want %q", got, want)
+	}
 }
 
 func TestRunRejectsUnknownCommand(t *testing.T) {
@@ -68,7 +95,7 @@ func TestRunAddCreatesBookmark(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"add", "https://example.com/a", "-title", "Example", "-notes", "Read later"},
+		[]string{"add", "-title", "Example", "-notes", "Read later", "https://example.com/a"},
 		mapLookup(map[string]string{
 			"BOOKMARKS_URL":   "http://localhost:8080",
 			"BOOKMARKS_TOKEN": "test-token",
@@ -439,7 +466,7 @@ func TestRunEditUpdatesBookmark(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"edit", "bookmark-1", "-url", "https://example.com/new", "-title", "Updated", "-notes", "", "-source", "bookmarkctl"},
+		[]string{"edit", "-url", "https://example.com/new", "-title", "Updated", "-notes", "", "-source", "bookmarkctl", "bookmark-1"},
 		validLookup(),
 		&stdout,
 		&stderr,
@@ -478,7 +505,7 @@ func TestRunEditCanClearFields(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"edit", "bookmark-1", "-title", "", "-notes", ""},
+		[]string{"edit", "-title", "", "-notes", "", "bookmark-1"},
 		validLookup(),
 		&stdout,
 		&stderr,
@@ -511,7 +538,7 @@ func TestRunEditRejectsBadArgsBeforeCreatingClient(t *testing.T) {
 		},
 		{
 			name: "extra arg",
-			args: []string{"edit", "bookmark-1", "extra", "-title", "Updated"},
+			args: []string{"edit", "extra", "-title", "Updated", "bookmark-1"},
 		},
 		{
 			name: "no update flags",
@@ -548,7 +575,7 @@ func TestRunEditReturnsClientErrors(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"edit", "bookmark-1", "-title", "Updated"},
+		[]string{"edit", "-title", "Updated", "bookmark-1"},
 		validLookup(),
 		&stdout,
 		&stderr,
@@ -652,7 +679,7 @@ func TestRunEditReturnsNewClientErrors(t *testing.T) {
 
 	err := run(
 		context.Background(),
-		[]string{"edit", "bookmark-1", "-title", "Updated"},
+		[]string{"edit", "-title", "Updated", "bookmark-1"},
 		validLookup(),
 		&stdout,
 		&stderr,
@@ -698,6 +725,201 @@ func TestRunReturnsNewClientErrors(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("run() error = nil, want error")
+	}
+}
+
+func TestRunRootHelp(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "short flag", args: []string{"-h"}},
+		{name: "long flag", args: []string{"--help"}},
+		{name: "help command", args: []string{"help"}},
+	}
+
+	var want string
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			err := run(
+				context.Background(),
+				tt.args,
+				mapLookup(nil),
+				&stdout,
+				&stderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+			if err != nil {
+				t.Fatalf("run() error = %v, want nil", err)
+			}
+			if stdout.Len() == 0 {
+				t.Fatal("stdout is empty, want root usage")
+			}
+			if got := stderr.String(); got != "" {
+				t.Fatalf("stderr = %q, want empty", got)
+			}
+
+			if want == "" {
+				want = stdout.String()
+			} else if got := stdout.String(); got != want {
+				t.Fatalf("stdout = %q, want %q", got, want)
+			}
+		})
+	}
+
+	for _, command := range []string{"add", "list", "edit", "delete", "help"} {
+		if !strings.Contains(want, command) {
+			t.Fatalf("root usage = %q, want command %q", want, command)
+		}
+	}
+}
+
+func TestRunRootVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := run(
+		context.Background(),
+		[]string{"--version"},
+		mapLookup(nil),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			t.Fatal("newClient should not be called")
+			return nil, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("run() error = %v, want nil", err)
+	}
+	if got := stdout.String(); got != version+"\n" {
+		t.Fatalf("stdout = %q, want %q", got, version+"\n")
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
+	}
+}
+
+func TestRunCommandHelp(t *testing.T) {
+	commands := []string{"add", "list", "edit", "delete"}
+
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			err := run(
+				context.Background(),
+				[]string{command, "--help"},
+				mapLookup(nil),
+				&stdout,
+				&stderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+
+			if err != nil {
+				t.Fatalf("run() error = %v, want nil", err)
+			}
+			if stdout.Len() == 0 {
+				t.Fatal("stdout is empty, want command usage")
+			}
+			if got := stderr.String(); got != "" {
+				t.Fatalf("stderr = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestRunHelpCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		helpArgs  []string
+		reference []string
+	}{
+		{
+			name:      "list",
+			helpArgs:  []string{"help", "list"},
+			reference: []string{"list", "--help"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var expectedStdout, expectedStderr bytes.Buffer
+			err := run(
+				context.Background(),
+				tt.reference,
+				mapLookup(nil),
+				&expectedStdout,
+				&expectedStderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+			if err != nil {
+				t.Fatalf("reference run() error = %v, want nil", err)
+			}
+
+			var stdout, stderr bytes.Buffer
+			err = run(
+				context.Background(),
+				tt.helpArgs,
+				mapLookup(nil),
+				&stdout,
+				&stderr,
+				func(apiclient.Config) (bookmarkClient, error) {
+					t.Fatal("newClient should not be called")
+					return nil, nil
+				},
+			)
+
+			if err != nil {
+				t.Fatalf("run() error = %v, want nil", err)
+			}
+			if got, want := stdout.String(), expectedStdout.String(); got != want {
+				t.Fatalf("stdout = %q, want %q", got, want)
+			}
+			if got := stderr.String(); got != "" {
+				t.Fatalf("stderr = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestRunHelpRejectsUnknownCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	unknownCommand := "wat"
+
+	err := run(
+		context.Background(),
+		[]string{"help", unknownCommand},
+		mapLookup(nil),
+		&stdout,
+		&stderr,
+		func(apiclient.Config) (bookmarkClient, error) {
+			t.Fatal("newClient should not be called")
+			return nil, nil
+		},
+	)
+
+	if err == nil {
+		t.Fatal("run() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), unknownCommand) {
+		t.Fatalf("run() error = %q, want unknown command %q", err, unknownCommand)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
 	}
 }
 

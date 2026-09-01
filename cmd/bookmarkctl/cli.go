@@ -11,11 +11,83 @@ import (
 	"bookmarks/internal/bookmarks"
 )
 
+const version = "dev"
+
 type bookmarkClient interface {
 	CreateBookmark(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
 	ListBookmarks(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
 	UpdateBookmark(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
 	DeleteBookmark(context.Context, string) error
+}
+
+func newCommandFlagSet(name string) (*flag.FlagSet, *bool) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	help := fs.Bool("h", false, "show help")
+	fs.BoolVar(help, "help", false, "show help")
+
+	return fs, help
+}
+
+func newRootFlagSet() (*flag.FlagSet, *bool, *bool) {
+	fs, help := newCommandFlagSet("bookmarkctl")
+	versionRequested := fs.Bool("v", false, "show version")
+	fs.BoolVar(versionRequested, "version", false, "show version")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), `Usage: bookmarkctl <command> [options]
+
+Commands:
+  add     Save a bookmark
+  list    List bookmarks
+  edit    Update a bookmark
+  delete  Delete a bookmark
+  help    Show help for a command
+
+Options:`)
+		fs.PrintDefaults()
+	}
+
+	return fs, help, versionRequested
+}
+
+func writeUsage(w io.Writer, fs *flag.FlagSet) {
+	fs.SetOutput(w)
+	fs.Usage()
+	fs.SetOutput(io.Discard)
+}
+
+type cliArgs struct {
+	command string
+	args    []string
+}
+
+func parseRootArgs(args []string, stdout, stderr io.Writer) (*cliArgs, error) {
+	fs, help, versionRequested := newRootFlagSet()
+
+	if err := fs.Parse(args); err != nil {
+		return nil, newUsageError(err, fs)
+	}
+
+	if *help {
+		writeUsage(stdout, fs)
+		return nil, nil
+	}
+
+	if *versionRequested {
+		fmt.Fprintln(stdout, version)
+		return nil, nil
+	}
+
+	if fs.NArg() == 0 {
+		return nil, newUsageError(errors.New("command is required"), fs)
+	}
+
+	command := fs.Arg(0)
+	return &cliArgs{
+		command: command,
+		args:    fs.Args()[1:],
+	}, nil
 }
 
 func run(
@@ -26,19 +98,58 @@ func run(
 	stderr io.Writer,
 	newClient func(apiclient.Config) (bookmarkClient, error),
 ) error {
+	cliArgs, err := parseRootArgs(args, stdout, stderr)
+	if err != nil {
+		return err
+	}
+
+	if cliArgs == nil {
+		return nil
+	}
+
+	switch cliArgs.command {
+	case "add":
+		return runAdd(ctx, cliArgs.args, lookup, stdout, stderr, newClient)
+	case "list":
+		return runList(ctx, cliArgs.args, lookup, stdout, stderr, newClient)
+	case "edit":
+		return runEdit(ctx, cliArgs.args, lookup, stdout, stderr, newClient)
+	case "delete":
+		return runDelete(ctx, cliArgs.args, lookup, stdout, stderr, newClient)
+	case "help":
+		return runHelp(ctx, cliArgs.args, lookup, stdout, stderr, newClient)
+	default:
+		return fmt.Errorf("unknown command %q", cliArgs.command)
+	}
+}
+
+func runHelp(
+	ctx context.Context,
+	args []string,
+	lookup func(string) (string, bool),
+	stdout io.Writer,
+	stderr io.Writer,
+	newClient func(apiclient.Config) (bookmarkClient, error),
+) error {
 	if len(args) == 0 {
-		return errors.New("command is required")
+		fs, _, _ := newRootFlagSet()
+		writeUsage(stdout, fs)
+		return nil
+	}
+	if len(args) != 1 {
+		fs, _, _ := newRootFlagSet()
+		return newUsageError(errors.New("help accepts at most one command"), fs)
 	}
 
 	switch args[0] {
 	case "add":
-		return runAdd(ctx, args[1:], lookup, stdout, stderr, newClient)
+		return runAdd(ctx, []string{"--help"}, lookup, stdout, stderr, newClient)
 	case "list":
-		return runList(ctx, args[1:], lookup, stdout, stderr, newClient)
+		return runList(ctx, []string{"--help"}, lookup, stdout, stderr, newClient)
 	case "edit":
-		return runEdit(ctx, args[1:], lookup, stdout, stderr, newClient)
+		return runEdit(ctx, []string{"--help"}, lookup, stdout, stderr, newClient)
 	case "delete":
-		return runDelete(ctx, args[1:], lookup, stdout, stderr, newClient)
+		return runDelete(ctx, []string{"--help"}, lookup, stdout, stderr, newClient)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -52,24 +163,24 @@ func runAdd(
 	stderr io.Writer,
 	newClient func(apiclient.Config) (bookmarkClient, error),
 ) error {
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-
+	fs, help := newCommandFlagSet("add")
 	title := fs.String("title", "", "bookmark title")
 	notes := fs.String("notes", "", "bookmark notes")
 
-	if len(args) == 0 {
-		return errors.New("add requires one url")
+	if err := fs.Parse(args); err != nil {
+		return newUsageError(err, fs)
 	}
 
-	newURL := args[0]
+	if *help {
+		writeUsage(stdout, fs)
+		return nil
+	}
 
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
+	if fs.NArg() != 1 {
+		return newUsageError(errors.New("exactly one url is required"), fs)
 	}
-	if fs.NArg() != 0 {
-		return errors.New("add takes only one url")
-	}
+
+	newURL := fs.Arg(0)
 
 	cfg, err := loadConfig(lookup)
 	if err != nil {
@@ -111,20 +222,28 @@ func runList(
 	stderr io.Writer,
 	newClient func(apiclient.Config) (bookmarkClient, error),
 ) error {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs, help := newCommandFlagSet("list")
+	long := false
 
-	long := fs.Bool("l", false, "long table view, not compatible with json or tsv output")
+	fs.BoolVar(&long, "l", false, "show all table fields")
+	fs.BoolVar(&long, "long", false, "show all table fields")
+
 	query := fs.String("query", "", "search term")
 	limit := fs.Int("limit", 0, "limit")
 	offset := fs.Int("offset", 0, "offset")
 	output := fs.String("output", "", "output format: table, tsv, json")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return newUsageError(err, fs)
 	}
+
+	if *help {
+		writeUsage(stdout, fs)
+		return nil
+	}
+
 	if fs.NArg() != 0 {
-		return errors.New("list does not take args")
+		return newUsageError(errors.New("list does not take positional arguments"), fs)
 	}
 
 	if *limit < 0 {
@@ -148,7 +267,7 @@ func runList(
 		}
 	}
 
-	if *long && format != ListFormatTable {
+	if long && format != ListFormatTable {
 		return fmt.Errorf("-l is only valid with table output")
 	}
 
@@ -165,7 +284,7 @@ func runList(
 
 	listFormatOptions := ListFormatOptions{
 		Format: format,
-		Long:   *long,
+		Long:   long,
 		Width:  width,
 	}
 
@@ -193,31 +312,31 @@ func runEdit(
 	stderr io.Writer,
 	newClient func(apiclient.Config) (bookmarkClient, error),
 ) error {
+	fs, help := newCommandFlagSet("edit")
 	var url optionalStringFlag
 	var title optionalStringFlag
 	var notes optionalStringFlag
 	var source optionalStringFlag
-
-	fs := flag.NewFlagSet("edit", flag.ContinueOnError)
-	fs.SetOutput(stderr)
 
 	fs.Var(&url, "url", "bookmark url")
 	fs.Var(&title, "title", "bookmark title")
 	fs.Var(&notes, "notes", "bookmark notes")
 	fs.Var(&source, "source", "bookmark source")
 
-	if len(args) == 0 {
-		return errors.New("edit requires an id")
+	if err := fs.Parse(args); err != nil {
+		return newUsageError(err, fs)
 	}
 
-	id := args[0]
+	if *help {
+		writeUsage(stdout, fs)
+		return nil
+	}
 
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
+	if fs.NArg() != 1 {
+		return newUsageError(errors.New("exactly one id is required"), fs)
 	}
-	if fs.NArg() != 0 {
-		return errors.New("edit does not take extra args")
-	}
+
+	id := fs.Arg(0)
 
 	var input bookmarks.UpdateInput
 	if url.set {
@@ -267,15 +386,22 @@ func runDelete(
 	stderr io.Writer,
 	newClient func(apiclient.Config) (bookmarkClient, error),
 ) error {
-	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs, help := newCommandFlagSet("delete")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return newUsageError(err, fs)
 	}
+
+	if *help {
+		writeUsage(stdout, fs)
+		return nil
+	}
+
 	if fs.NArg() != 1 {
-		return errors.New("delete requires an id")
+		return newUsageError(errors.New("exactly one id is required"), fs)
 	}
+
+	id := fs.Arg(0)
 
 	cfg, err := loadConfig(lookup)
 	if err != nil {
@@ -290,14 +416,36 @@ func runDelete(
 		return fmt.Errorf("create client: %w", err)
 	}
 
-	err = client.DeleteBookmark(ctx, fs.Arg(0))
+	err = client.DeleteBookmark(ctx, id)
 	if err != nil {
 		return fmt.Errorf("delete bookmark: %w", err)
 	}
 
-	fmt.Fprintf(stdout, "deleted %s\n", fs.Arg(0))
+	fmt.Fprintf(stdout, "deleted %s\n", id)
 
 	return nil
+}
+
+type usageError struct {
+	err   error
+	usage func(io.Writer)
+}
+
+func newUsageError(err error, fs *flag.FlagSet) *usageError {
+	return &usageError{
+		err: err,
+		usage: func(w io.Writer) {
+			writeUsage(w, fs)
+		},
+	}
+}
+
+func (e *usageError) Error() string {
+	return e.err.Error()
+}
+
+func (e *usageError) Unwrap() error {
+	return e.err
 }
 
 type optionalStringFlag struct {
