@@ -95,7 +95,7 @@ func TestWriteListJSONEmpty(t *testing.T) {
 func TestWriteListTable(t *testing.T) {
 	var buf bytes.Buffer
 
-	// Normal (short) table: only Title and URL per the ls-inspired design.
+	// Normal table includes the fields needed to identify and act on a bookmark.
 	// TSV/JSON are always "full" regardless of Long.
 	err := WriteListBookmarks(&buf, sampleListBookmarks(), ListFormatOptions{Format: ListFormatTable})
 	if err != nil {
@@ -108,20 +108,16 @@ func TestWriteListTable(t *testing.T) {
 		t.Fatalf("no output")
 	}
 	header := lines[0]
-	// Short table headers: only Title and URL (ls-style normal view)
-	for _, label := range []string{"Title", "URL"} {
+	for _, label := range []string{"ID", "Title", "URL"} {
 		if !strings.Contains(header, label) {
-			t.Fatalf("short table header missing %q: %q", label, header)
+			t.Fatalf("table header missing %q: %q", label, header)
 		}
 	}
-	if strings.Contains(header, "ID") {
-		t.Fatalf("short table header should not include ID: %q", header)
-	}
-	// No ID values should leak into short table output for this sample
 	for _, id := range []string{"bookmark-1", "bookmark-2"} {
 		if strings.Contains(output, id) {
-			t.Fatalf("short table should not expose ID values: found %q in %q", id, output)
+			continue
 		}
+		t.Fatalf("table output missing ID value %q: %q", id, output)
 	}
 
 	if len(lines) != 3 {
@@ -277,7 +273,7 @@ func TestWriteListTableAlignsColumns(t *testing.T) {
 func TestWriteListTableEmpty(t *testing.T) {
 	var buf bytes.Buffer
 
-	// Short (normal) empty table: header only, Title and URL, no ID.
+	// Normal empty table contains the identifying fields.
 	err := WriteListBookmarks(&buf, nil, ListFormatOptions{Format: ListFormatTable})
 	if err != nil {
 		t.Fatalf("WriteListBookmarks() error = %v", err)
@@ -292,8 +288,8 @@ func TestWriteListTableEmpty(t *testing.T) {
 	if !strings.Contains(header, "Title") || !strings.Contains(header, "URL") {
 		t.Fatalf("short table header should contain Title and URL: %q", header)
 	}
-	if strings.Contains(header, "ID") {
-		t.Fatalf("short table header must not contain ID: %q", header)
+	if !strings.Contains(header, "ID") {
+		t.Fatalf("table header must contain ID: %q", header)
 	}
 }
 
@@ -352,7 +348,7 @@ func TestResolveListFormatDefaults(t *testing.T) {
 		want  ListFormat
 	}{
 		{name: "terminal", isTTY: true, want: ListFormatTable},
-		{name: "pipe", isTTY: false, want: ListFormatTSV},
+		{name: "pipe", isTTY: false, want: ListFormatTable},
 	}
 
 	for _, tt := range tests {

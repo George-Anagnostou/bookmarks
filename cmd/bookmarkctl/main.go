@@ -10,16 +10,11 @@ import (
 )
 
 func main() {
-	err := run(
-		context.Background(),
-		os.Args[1:],
-		os.LookupEnv,
-		os.Stdout,
-		os.Stderr,
-		func(cfg apiclient.Config) (bookmarkClient, error) {
-			return apiclient.New(cfg)
-		},
-	)
+	app := newCLI(os.LookupEnv, os.Stdout, os.Stderr, func(cfg apiclient.Config) (bookmarkClient, error) {
+		return apiclient.New(cfg)
+	})
+
+	err := app.run(context.Background(), os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 

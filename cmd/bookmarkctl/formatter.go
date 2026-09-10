@@ -49,10 +49,7 @@ func ResolveListFormat(explicit string, stdout io.Writer, isTTY func(io.Writer) 
 			return "", fmt.Errorf("unknown list format %q", explicit)
 		}
 	}
-	if isTTY(stdout) {
-		return ListFormatTable, nil
-	}
-	return ListFormatTSV, nil
+	return ListFormatTable, nil
 }
 
 func isTerminal(w io.Writer) bool {
@@ -106,6 +103,7 @@ func fitCell(value string, width int) string {
 
 func writeListTable(w io.Writer, bookmarkList []bookmarks.Bookmark, opts ListFormatOptions) error {
 	header := []string{
+		"ID",
 		"Title",
 		"URL",
 	}
@@ -125,6 +123,7 @@ func writeListTable(w io.Writer, bookmarkList []bookmarks.Bookmark, opts ListFor
 	rows := make([][]string, 0, len(bookmarkList))
 	for _, bookmark := range bookmarkList {
 		row := []string{
+			bookmark.ID,
 			bookmark.Title,
 			bookmark.URL,
 		}
