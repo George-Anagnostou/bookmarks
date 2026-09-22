@@ -28,17 +28,6 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   read_at TEXT
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS tags (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS bookmark_tags (
-  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
-  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-  PRIMARY KEY (bookmark_id, tag_id)
-) STRICT;
-
 CREATE INDEX IF NOT EXISTS bookmarks_created_at_idx
 ON bookmarks(created_at DESC);
 `
@@ -168,6 +157,8 @@ func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bo
 	if listQuery.Limit > 0 {
 		query += " LIMIT ? "
 		args = append(args, listQuery.Limit)
+	} else if listQuery.Offset > 0 {
+		query += " LIMIT -1 "
 	}
 
 	if listQuery.Offset > 0 {

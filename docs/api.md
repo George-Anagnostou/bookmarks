@@ -26,7 +26,7 @@ Body:
 }
 ```
 
-Response `200`:
+Response `201` when created, or `200` when the normalized URL already exists:
 
 ```json
 {

@@ -38,7 +38,7 @@ bookmarkctl list
 bookmarkctl list -l
 bookmarkctl list -query sqlite -limit 25
 bookmarkctl list -format json | jq '.[].url'
-bookmarkctl list | cut -f2
+bookmarkctl list -format tsv | cut -f2
 bookmarkctl list -l -format table
 ```
 
