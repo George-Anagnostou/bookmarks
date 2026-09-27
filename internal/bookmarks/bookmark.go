@@ -25,7 +25,6 @@ type Bookmark struct {
 	URL           string    `json:"url"`
 	NormalizedURL string    `json:"normalized_url"`
 	Title         string    `json:"title,omitempty"`
-	Tags          []string  `json:"tags,omitempty"`
 	Notes         string    `json:"notes,omitempty"`
 	Source        string    `json:"source,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -33,11 +32,10 @@ type Bookmark struct {
 }
 
 type CreateInput struct {
-	URL    string   `json:"url"`
-	Title  string   `json:"title,omitempty"`
-	Tags   []string `json:"tags,omitempty"`
-	Notes  string   `json:"notes,omitempty"`
-	Source string   `json:"source,omitempty"`
+	URL    string `json:"url"`
+	Title  string `json:"title,omitempty"`
+	Notes  string `json:"notes,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 type UpdateInput struct {
