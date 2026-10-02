@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"bookmarks/internal/bookmarks"
+	"bookmarks/internal/sqlite"
 )
 
 func TestCreateBookmark(t *testing.T) {
@@ -97,7 +98,7 @@ func TestCreateBookmarkFetchesMissingTitle(t *testing.T) {
 				NormalizedURL: "https://example.com/a",
 			}, true, nil
 		},
-		setTitleIfBlank: func(ctx context.Context, id, title string) (bool, error) {
+		setBookmarkTitleIfBlank: func(ctx context.Context, id, title string) (bool, error) {
 			updated <- titleUpdate{id: id, title: title}
 			return true, nil
 		},
@@ -145,15 +146,15 @@ func TestCreateBookmarkFetchesMissingTitle(t *testing.T) {
 }
 
 func TestCreateBookmarkFetchedTitleDoesNotOverwriteManualEdit(t *testing.T) {
-	store, err := bookmarks.OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "bookmarks.db"))
 	if err != nil {
-		t.Fatalf("OpenSQLStore() error = %v", err)
+		t.Fatalf("sqlite.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
 	setTitleCalled := make(chan struct{}, 1)
 	notifyingStore := &titleUpdateNotifyingStore{
-		Store:          store,
+		BookmarkStore:  store,
 		setTitleCalled: setTitleCalled,
 	}
 	fetchStarted := make(chan struct{})
@@ -211,7 +212,7 @@ func TestCreateBookmarkFetchedTitleDoesNotOverwriteManualEdit(t *testing.T) {
 		t.Fatal("timed out waiting for fetched title update")
 	}
 
-	bookmarksList, err := store.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+	bookmarksList, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListBookmarks() error = %v", err)
 	}
@@ -340,7 +341,7 @@ func TestCreateBookmarkRejectsBadRequests(t *testing.T) {
 			name:       "unsupported url",
 			method:     http.MethodPost,
 			body:       `{"url":"ftp://example.com/file"}`,
-			storeError: bookmarks.ErrUnsupported,
+			storeError: bookmarks.ErrUnsupportedScheme,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -409,8 +410,8 @@ func TestListBookmarksJSON(t *testing.T) {
 	}
 
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
-			if query != (bookmarks.ListQuery{}) {
+		listBookmarks: func(ctx context.Context, query bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
+			if query != (bookmarks.ListOptions{}) {
 				t.Fatalf("query = %#v, want zero value", query)
 			}
 			return want, nil
@@ -442,8 +443,8 @@ func TestListBookmarksJSON(t *testing.T) {
 
 func TestListBookmarksJSONReturnsEmptyArray(t *testing.T) {
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
-			if query != (bookmarks.ListQuery{}) {
+		listBookmarks: func(ctx context.Context, query bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
+			if query != (bookmarks.ListOptions{}) {
 				t.Fatalf("query = %#v, want zero value", query)
 			}
 			return nil, nil
@@ -476,10 +477,10 @@ func TestListBookmarksJSONReturnsEmptyArray(t *testing.T) {
 	}
 }
 
-func TestListBookmarksJSONPassesListQuery(t *testing.T) {
+func TestListBookmarksJSONPassesListOptions(t *testing.T) {
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
-			want := bookmarks.ListQuery{
+		listBookmarks: func(ctx context.Context, query bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
+			want := bookmarks.ListOptions{
 				Query:  "sqlite",
 				Limit:  25,
 				Offset: 50,
@@ -578,7 +579,7 @@ func TestListBookmarksJSONRequiresBearerToken(t *testing.T) {
 
 func TestListBookmarksJSONHandlesStoreError(t *testing.T) {
 	store := &fakeStore{
-		listBookmarks: func(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+		listBookmarks: func(ctx context.Context, query bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
 			return nil, errors.New("database unavailable")
 		},
 	}
@@ -742,7 +743,7 @@ func TestUpdateBookmarkRejectsBadRequests(t *testing.T) {
 			name:       "unsupported url",
 			method:     http.MethodPatch,
 			body:       `{"url":"ftp://example.com/file"}`,
-			storeError: bookmarks.ErrUnsupported,
+			storeError: bookmarks.ErrUnsupportedScheme,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -957,20 +958,20 @@ func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
 }
 
 type fakeStore struct {
-	createBookmark  func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
-	listBookmarks   func(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
-	updateBookmark  func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
-	deleteBookmark  func(context.Context, string) error
-	setTitleIfBlank func(context.Context, string, string) (bool, error)
+	createBookmark          func(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
+	listBookmarks           func(context.Context, bookmarks.ListOptions) ([]bookmarks.Bookmark, error)
+	updateBookmark          func(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
+	deleteBookmark          func(context.Context, string) error
+	setBookmarkTitleIfBlank func(context.Context, string, string) (bool, error)
 }
 
 type titleUpdateNotifyingStore struct {
-	bookmarks.Store
+	BookmarkStore
 	setTitleCalled chan<- struct{}
 }
 
-func (s *titleUpdateNotifyingStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
-	changed, err := s.Store.SetTitleIfBlank(ctx, id, title)
+func (s *titleUpdateNotifyingStore) SetBookmarkTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
+	changed, err := s.BookmarkStore.SetBookmarkTitleIfBlank(ctx, id, title)
 	s.setTitleCalled <- struct{}{}
 	return changed, err
 }
@@ -993,7 +994,7 @@ func (s *fakeStore) CreateBookmark(ctx context.Context, input bookmarks.CreateIn
 	return s.createBookmark(ctx, input)
 }
 
-func (s *fakeStore) ListBookmarks(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+func (s *fakeStore) ListBookmarks(ctx context.Context, query bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
 	if s.listBookmarks == nil {
 		panic("unexpected ListBookmarks call")
 	}
@@ -1014,11 +1015,11 @@ func (s *fakeStore) DeleteBookmark(ctx context.Context, id string) error {
 	return s.deleteBookmark(ctx, id)
 }
 
-func (s *fakeStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
-	if s.setTitleIfBlank == nil {
-		panic("undexpected SetTitleIfBlank call")
+func (s *fakeStore) SetBookmarkTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
+	if s.setBookmarkTitleIfBlank == nil {
+		panic("unexpected SetBookmarkTitleIfBlank call")
 	}
-	return s.setTitleIfBlank(ctx, id, title)
+	return s.setBookmarkTitleIfBlank(ctx, id, title)
 }
 
 func newJSONRequest(t *testing.T, method string, path string, body any) *http.Request {

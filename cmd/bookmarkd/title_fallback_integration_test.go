@@ -290,7 +290,7 @@ func waitForBookmarkTitle(t *testing.T, client *apiclient.Client, id, wantTitle 
 	deadline := time.Now().Add(time.Second)
 	var lastTitle string
 	for time.Now().Before(deadline) {
-		bookmarksList, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+		bookmarksList, err := client.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -312,7 +312,7 @@ func assertBookmarkTitleRemains(t *testing.T, client *apiclient.Client, id, want
 
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		bookmarksList, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+		bookmarksList, err := client.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}

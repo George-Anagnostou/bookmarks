@@ -1,92 +1,35 @@
-package bookmarks
+package sqlite
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"modernc.org/sqlite"
+	sqlitedriver "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
+
+	"bookmarks/internal/bookmarks"
 )
 
-const schemaSQL = `
-CREATE TABLE IF NOT EXISTS bookmarks (
-  id TEXT PRIMARY KEY,
-  url TEXT NOT NULL,
-  normalized_url TEXT NOT NULL UNIQUE,
-  title TEXT NOT NULL DEFAULT '',
-  notes TEXT NOT NULL DEFAULT '',
-  source TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  archived_at TEXT,
-  read_at TEXT
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS tags (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS bookmark_tags (
-  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
-  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-  PRIMARY KEY (bookmark_id, tag_id)
-) STRICT;
-
-CREATE INDEX IF NOT EXISTS bookmarks_created_at_idx
-ON bookmarks(created_at DESC);
-`
-
-type SQLStore struct {
-	db *sql.DB
-}
-
-var _ Store = (*SQLStore)(nil)
-
-func OpenSQLStore(path string) (*SQLStore, error) {
-	absPath, err := filepath.Abs(path)
+// CreateBookmark returns the bookmark and whether it was newly created.
+// A duplicate normalized URL returns the existing bookmark without modifying it.
+func (s *Store) CreateBookmark(ctx context.Context, input bookmarks.CreateInput) (bookmarks.Bookmark, bool, error) {
+	id, err := newID()
 	if err != nil {
-		return nil, fmt.Errorf("resolve sqlite path: %w", err)
+		return bookmarks.Bookmark{}, false, err
 	}
 
-	db, err := sql.Open("sqlite", sqliteDSN(absPath))
+	normalizedURL, err := bookmarks.NormalizeURL(input.URL)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite database: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-
-	if _, err := db.Exec(schemaSQL); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("apply sqlite schema: %w", err)
-	}
-
-	return &SQLStore{db: db}, nil
-}
-
-func (s *SQLStore) Close() error {
-	return s.db.Close()
-}
-
-func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookmark, bool, error) {
-	id, err := NewID()
-	if err != nil {
-		return Bookmark{}, false, err
-	}
-
-	normalizedURL, err := NormalizeURL(input.URL)
-	if err != nil {
-		return Bookmark{}, false, err
+		return bookmarks.Bookmark{}, false, err
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
 
-	bookmark := Bookmark{
+	bookmark := bookmarks.Bookmark{
 		ID:            id,
 		URL:           strings.TrimSpace(input.URL),
 		NormalizedURL: normalizedURL,
@@ -99,7 +42,7 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 
 	result, err := s.db.ExecContext(
 		ctx, `
-		INSERT OR IGNORE INTO bookmarks (
+		INSERT INTO bookmarks (
 			id,
 			url,
 			normalized_url,
@@ -110,6 +53,7 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 			updated_at
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (normalized_url) DO NOTHING
 		`,
 		bookmark.ID,
 		bookmark.URL,
@@ -121,18 +65,18 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 		bookmark.UpdatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
-		return Bookmark{}, false, fmt.Errorf("insert bookmark: %w", err)
+		return bookmarks.Bookmark{}, false, fmt.Errorf("insert bookmark: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return Bookmark{}, false, fmt.Errorf("check inserted bookmark: %w", err)
+		return bookmarks.Bookmark{}, false, fmt.Errorf("check inserted bookmark: %w", err)
 	}
 
 	if rowsAffected == 0 {
 		bookmark, err := s.bookmarkByNormalizedURL(ctx, normalizedURL)
 		if err != nil {
-			return Bookmark{}, false, err
+			return bookmarks.Bookmark{}, false, err
 		}
 
 		return bookmark, false, nil
@@ -141,7 +85,9 @@ func (s *SQLStore) CreateBookmark(ctx context.Context, input CreateInput) (Bookm
 	return bookmark, true, nil
 }
 
-func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bookmark, error) {
+// ListBookmarks returns matching bookmarks, newest first, with insertion order
+// breaking timestamp ties. An empty result may be nil.
+func (s *Store) ListBookmarks(ctx context.Context, options bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
 	var args []any
 	where := []string{
 		"LOWER(url) LIKE ?",
@@ -151,7 +97,7 @@ func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bo
 		"LOWER(source) LIKE ?",
 	}
 
-	q := strings.TrimSpace(listQuery.Query)
+	q := strings.TrimSpace(options.Query)
 
 	query := `
 		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
@@ -165,14 +111,16 @@ func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bo
 
 	query += " ORDER BY created_at DESC, rowid DESC "
 
-	if listQuery.Limit > 0 {
+	if options.Limit > 0 {
 		query += " LIMIT ? "
-		args = append(args, listQuery.Limit)
+		args = append(args, options.Limit)
+	} else if options.Offset > 0 {
+		query += " LIMIT -1 "
 	}
 
-	if listQuery.Offset > 0 {
+	if options.Offset > 0 {
 		query += " OFFSET ? "
-		args = append(args, listQuery.Offset)
+		args = append(args, options.Offset)
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -181,7 +129,7 @@ func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bo
 	}
 	defer rows.Close()
 
-	var bookmarks []Bookmark
+	var bookmarks []bookmarks.Bookmark
 
 	for rows.Next() {
 		bkmk, err := scanBookmark(rows)
@@ -199,16 +147,19 @@ func (s *SQLStore) ListBookmarks(ctx context.Context, listQuery ListQuery) ([]Bo
 	return bookmarks, nil
 }
 
-func (s *SQLStore) UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error) {
+// UpdateBookmark applies the supplied fields. It returns ErrNoUpdateFields for
+// empty input, ErrNotFound for a missing bookmark, or ErrDuplicateURL for a URL
+// belonging to another bookmark. These errors are defined in package bookmarks.
+func (s *Store) UpdateBookmark(ctx context.Context, id string, input bookmarks.UpdateInput) (bookmarks.Bookmark, error) {
 	var sets []string
 	var args []any
 
 	if input.URL != nil {
 		rawURL := strings.TrimSpace(*input.URL)
 
-		normalizedURL, err := NormalizeURL(rawURL)
+		normalizedURL, err := bookmarks.NormalizeURL(rawURL)
 		if err != nil {
-			return Bookmark{}, err
+			return bookmarks.Bookmark{}, err
 		}
 
 		sets = append(sets, "url = ?", "normalized_url = ?")
@@ -231,7 +182,7 @@ func (s *SQLStore) UpdateBookmark(ctx context.Context, id string, input UpdateIn
 	}
 
 	if len(sets) == 0 {
-		return Bookmark{}, ErrNoUpdateFields
+		return bookmarks.Bookmark{}, bookmarks.ErrNoUpdateFields
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -251,23 +202,24 @@ func (s *SQLStore) UpdateBookmark(ctx context.Context, id string, input UpdateIn
 
 	bookmark, err := scanBookmark(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Bookmark{}, ErrNotFound
+		return bookmarks.Bookmark{}, bookmarks.ErrNotFound
 	}
 
 	// Map normalized_url unique constraint violations to domain duplicate error
-	var sqliteErr *sqlite.Error
+	var sqliteErr *sqlitedriver.Error
 	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
-		return Bookmark{}, ErrDuplicateURL
+		return bookmarks.Bookmark{}, bookmarks.ErrDuplicateURL
 	}
 
 	if err != nil {
-		return Bookmark{}, fmt.Errorf("update bookmark: %w", err)
+		return bookmarks.Bookmark{}, fmt.Errorf("update bookmark: %w", err)
 	}
 
 	return bookmark, nil
 }
 
-func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error {
+// DeleteBookmark deletes a bookmark or returns bookmarks.ErrNotFound.
+func (s *Store) DeleteBookmark(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `
 		DELETE
 		FROM bookmarks
@@ -283,12 +235,14 @@ func (s *SQLStore) DeleteBookmark(ctx context.Context, id string) error {
 	}
 
 	if numRows == 0 {
-		return ErrNotFound
+		return bookmarks.ErrNotFound
 	}
 	return nil
 }
 
-func (s *SQLStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
+// SetBookmarkTitleIfBlank atomically fills a blank title and reports whether it
+// changed. A blank supplied title or missing bookmark is a no-op.
+func (s *Store) SetBookmarkTitleIfBlank(ctx context.Context, id, title string) (bool, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return false, nil
@@ -311,7 +265,7 @@ func (s *SQLStore) SetTitleIfBlank(ctx context.Context, id, title string) (bool,
 	return rows == 1, nil
 }
 
-func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL string) (Bookmark, error) {
+func (s *Store) bookmarkByNormalizedURL(ctx context.Context, normalizedURL string) (bookmarks.Bookmark, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, url, normalized_url, title, notes, source, created_at, updated_at
 		FROM bookmarks
@@ -320,30 +274,17 @@ func (s *SQLStore) bookmarkByNormalizedURL(ctx context.Context, normalizedURL st
 
 	bkmk, err := scanBookmark(row)
 	if err != nil {
-		return Bookmark{}, err
+		return bookmarks.Bookmark{}, err
 	}
 	return bkmk, nil
-}
-
-func sqliteDSN(path string) string {
-	u := url.URL{
-		Scheme: "file",
-		Path:   path,
-	}
-	q := u.Query()
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "journal_mode(WAL)")
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 type bookmarkScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanBookmark(scanner bookmarkScanner) (Bookmark, error) {
-	var b Bookmark
+func scanBookmark(scanner bookmarkScanner) (bookmarks.Bookmark, error) {
+	var b bookmarks.Bookmark
 	var createdAt string
 	var updatedAt string
 
@@ -358,17 +299,17 @@ func scanBookmark(scanner bookmarkScanner) (Bookmark, error) {
 		&updatedAt,
 	)
 	if err != nil {
-		return Bookmark{}, err
+		return bookmarks.Bookmark{}, err
 	}
 
 	b.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		return Bookmark{}, err
+		return bookmarks.Bookmark{}, err
 	}
 
 	b.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt)
 	if err != nil {
-		return Bookmark{}, err
+		return bookmarks.Bookmark{}, err
 	}
 
 	return b, nil

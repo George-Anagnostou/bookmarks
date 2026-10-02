@@ -15,13 +15,13 @@ import (
 )
 
 type Config struct {
-	Store   bookmarks.Store
+	Store   BookmarkStore
 	Token   string
 	Fetcher Fetcher
 }
 
 type Server struct {
-	store   bookmarks.Store
+	store   BookmarkStore
 	token   string
 	fetcher Fetcher
 }
@@ -100,7 +100,7 @@ func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, bookmarks.ErrEmptyURL),
-			errors.Is(err, bookmarks.ErrUnsupported),
+			errors.Is(err, bookmarks.ErrUnsupportedScheme),
 			errors.Is(err, bookmarks.ErrMissingHost),
 			errors.Is(err, bookmarks.ErrURLUserInfo):
 			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "bad request"})
@@ -127,13 +127,13 @@ func (s *Server) handleCreateBookmark(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListBookmarksJSON(w http.ResponseWriter, r *http.Request) {
-	listQuery, err := getListQuery(r)
+	listOptions, err := getListOptions(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid parameters"})
 		return
 	}
 
-	bookmarksList, err := s.store.ListBookmarks(r.Context(), listQuery)
+	bookmarksList, err := s.store.ListBookmarks(r.Context(), listOptions)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
@@ -164,7 +164,7 @@ func (s *Server) handleUpdateBookmark(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, bookmarks.ErrEmptyURL),
-			errors.Is(err, bookmarks.ErrUnsupported),
+			errors.Is(err, bookmarks.ErrUnsupportedScheme),
 			errors.Is(err, bookmarks.ErrMissingHost),
 			errors.Is(err, bookmarks.ErrURLUserInfo),
 			errors.Is(err, bookmarks.ErrNoUpdateFields):
@@ -257,7 +257,7 @@ func constantTimeEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-func getListQuery(r *http.Request) (bookmarks.ListQuery, error) {
+func getListOptions(r *http.Request) (bookmarks.ListOptions, error) {
 	query := r.URL.Query().Get("query")
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
@@ -273,7 +273,7 @@ func getListQuery(r *http.Request) (bookmarks.ListQuery, error) {
 		var err error
 		limit, err = strconv.Atoi(limitStr)
 		if err != nil {
-			return bookmarks.ListQuery{}, err
+			return bookmarks.ListOptions{}, err
 		}
 	}
 
@@ -284,15 +284,15 @@ func getListQuery(r *http.Request) (bookmarks.ListQuery, error) {
 		var err error
 		offset, err = strconv.Atoi(offsetStr)
 		if err != nil {
-			return bookmarks.ListQuery{}, err
+			return bookmarks.ListOptions{}, err
 		}
 	}
 
 	if limit < 0 || offset < 0 {
-		return bookmarks.ListQuery{}, errors.New("limit and offset must be non-negative")
+		return bookmarks.ListOptions{}, errors.New("limit and offset must be non-negative")
 	}
 
-	return bookmarks.ListQuery{
+	return bookmarks.ListOptions{
 		Query:  query,
 		Limit:  limit,
 		Offset: offset,
@@ -316,6 +316,6 @@ func (s *Server) fetchTitleAsync(id, url string) {
 			return
 		}
 
-		_, _ = s.store.SetTitleIfBlank(ctx, id, title)
+		_, _ = s.store.SetBookmarkTitleIfBlank(ctx, id, title)
 	}()
 }

@@ -1,24 +1,7 @@
+// Package bookmarks defines bookmark data and URL normalization rules.
 package bookmarks
 
-import (
-	"context"
-	"errors"
-	"fmt"
-	"net"
-	"net/url"
-	"strings"
-	"time"
-)
-
-var (
-	ErrEmptyURL       = errors.New("url is required")
-	ErrUnsupported    = errors.New("url must use http or https")
-	ErrMissingHost    = errors.New("url host is required")
-	ErrURLUserInfo    = errors.New("url must not include credentials")
-	ErrNotFound       = errors.New("bookmark not found")
-	ErrDuplicateURL   = errors.New("bookmark url already exists")
-	ErrNoUpdateFields = errors.New("bookmark edit must update at least one field")
-)
+import "time"
 
 type Bookmark struct {
 	ID            string    `json:"id"`
@@ -40,6 +23,8 @@ type CreateInput struct {
 	Source string   `json:"source,omitempty"`
 }
 
+// UpdateInput describes a partial update. Nil fields are left unchanged;
+// pointers to empty strings explicitly clear fields.
 type UpdateInput struct {
 	URL    *string `json:"url,omitempty"`
 	Title  *string `json:"title,omitempty"`
@@ -47,60 +32,11 @@ type UpdateInput struct {
 	Source *string `json:"source,omitempty"`
 }
 
-type ListQuery struct {
+// ListOptions controls bookmark search and pagination. Query is a
+// case-insensitive text search across URL, normalized URL, title, notes, and
+// source. Non-positive limits are unbounded; non-positive offsets skip nothing.
+type ListOptions struct {
 	Query  string
 	Limit  int
 	Offset int
-}
-
-type Store interface {
-	CreateBookmark(ctx context.Context, input CreateInput) (Bookmark, bool, error)
-	ListBookmarks(ctx context.Context, query ListQuery) ([]Bookmark, error)
-	UpdateBookmark(ctx context.Context, id string, input UpdateInput) (Bookmark, error)
-	DeleteBookmark(ctx context.Context, id string) error
-	SetTitleIfBlank(ctx context.Context, id, title string) (bool, error)
-}
-
-func NormalizeURL(raw string) (string, error) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return "", ErrEmptyURL
-	}
-
-	if !strings.Contains(s, "://") {
-		s = "https://" + s
-	}
-
-	u, err := url.Parse(s)
-	if err != nil {
-		return "", fmt.Errorf("parse url: %w", err)
-	}
-
-	u.Scheme = strings.ToLower(u.Scheme)
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", ErrUnsupported
-	}
-	if u.User != nil {
-		return "", ErrURLUserInfo
-	}
-	if u.Host == "" {
-		return "", ErrMissingHost
-	}
-
-	host := strings.ToLower(u.Hostname())
-	port := u.Port()
-	switch {
-	case port == "":
-		u.Host = host
-	case (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443"):
-		u.Host = host
-	default:
-		u.Host = net.JoinHostPort(host, port)
-	}
-
-	if u.Path == "" {
-		u.Path = "/"
-	}
-
-	return u.String(), nil
 }

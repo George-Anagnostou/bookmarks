@@ -1,4 +1,4 @@
-package bookmarks
+package sqlite
 
 import (
 	"crypto/rand"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-func NewID() (string, error) {
+func newID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("generate bookmark id: %w", err)
