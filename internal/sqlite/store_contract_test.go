@@ -256,27 +256,38 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) *Store) {
 		}
 	})
 
-	t.Run("list bookmark offset without limit", func(t *testing.T) {
+	t.Run("list bookmark offset without limit returns remaining results", func(t *testing.T) {
 		store := newStore(t)
-		for _, title := range []string{"First", "Second", "Third"} {
-			_, _, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
-				URL:   "https://example.com/" + title,
-				Title: title,
-			})
+		for _, url := range []string{
+			"https://example.com/one",
+			"https://example.com/two",
+			"https://example.com/three",
+		} {
+			_, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: url})
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("CreateBookmark(%q) error = %v", url, err)
 			}
+			if !created {
+				t.Fatalf("CreateBookmark(%q) created = false, want true", url)
+			}
+		}
+
+		all, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
+		if err != nil {
+			t.Fatalf("ListBookmarks() all error = %v", err)
 		}
 
 		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{Offset: 1})
 		if err != nil {
-			t.Fatalf("ListBookmarks() error = %v", err)
+			t.Fatalf("ListBookmarks() offset-only error = %v", err)
 		}
-		if len(got) != 2 {
-			t.Fatalf("ListBookmarks() returned %d bookmarks, want 2", len(got))
+		if len(got) != len(all)-1 {
+			t.Fatalf("ListBookmarks() returned %d bookmarks, want %d", len(got), len(all)-1)
 		}
-		if got[0].Title != "Second" || got[1].Title != "First" {
-			t.Fatalf("ListBookmarks() = %#v, want Second followed by First", got)
+		for i := range got {
+			if got[i].ID != all[i+1].ID {
+				t.Fatalf("bookmark %d ID = %q, want %q", i, got[i].ID, all[i+1].ID)
+			}
 		}
 	})
 

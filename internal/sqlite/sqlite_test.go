@@ -17,10 +17,15 @@ func TestOpenAppliesSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	tables := []string{"bookmarks", "tags", "bookmark_tags"}
+	tables := []string{"bookmarks"}
 	for _, table := range tables {
 		if !sqliteTableExists(t, store.db, table) {
 			t.Fatalf("expected table %q to exist", table)
+		}
+	}
+	for _, table := range []string{"tags", "bookmark_tags"} {
+		if sqliteTableExists(t, store.db, table) {
+			t.Fatalf("did not expect table %q to exist", table)
 		}
 	}
 }
