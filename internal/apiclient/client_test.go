@@ -187,7 +187,7 @@ func TestListBookmarks(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server.URL)
-	got, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+	got, err := client.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListBookmarks() error = %v", err)
 	}
@@ -211,7 +211,7 @@ func TestListBookmarksEmpty(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server.URL)
-	got, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+	got, err := client.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListBookmarks() error = %v", err)
 	}
@@ -254,7 +254,7 @@ func TestListBookmarksSendsQueryOptions(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server.URL)
-	got, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{
+	got, err := client.ListBookmarks(context.Background(), bookmarks.ListOptions{
 		Query:  "sqlite fts",
 		Limit:  25,
 		Offset: 50,
@@ -504,7 +504,7 @@ func TestClientReturnsErrorForNonSuccessStatus(t *testing.T) {
 			t.Cleanup(server.Close)
 
 			client := newTestClient(t, server.URL)
-			_, err := client.ListBookmarks(context.Background(), bookmarks.ListQuery{})
+			_, err := client.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 			if err == nil {
 				t.Fatal("ListBookmarks() error = nil, want error")
 			}

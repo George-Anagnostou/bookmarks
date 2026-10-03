@@ -65,7 +65,7 @@ func TestNormalizeURLRejectsBadInput(t *testing.T) {
 		{
 			name: "unsupported scheme",
 			raw:  "ftp://example.com/file",
-			want: ErrUnsupported,
+			want: ErrUnsupportedScheme,
 		},
 		{
 			name: "missing host",

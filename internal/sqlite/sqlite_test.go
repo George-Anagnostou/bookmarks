@@ -1,18 +1,19 @@
-package bookmarks
+package sqlite
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"bookmarks/internal/bookmarks"
 )
 
-func TestOpenSQLStoreAppliesSchema(t *testing.T) {
-	store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+func TestOpenAppliesSchema(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "bookmarks.db"))
 	if err != nil {
-		t.Fatalf("OpenSQLStore() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -26,6 +27,20 @@ func TestOpenSQLStoreAppliesSchema(t *testing.T) {
 		if sqliteTableExists(t, store.db, table) {
 			t.Fatalf("did not expect table %q to exist", table)
 		}
+	}
+}
+
+func TestOpenCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "bookmarks.db"))
+	if store != nil {
+		_ = store.Close()
+		t.Fatal("Open() returned a store for a canceled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Open() error = %v, want context.Canceled", err)
 	}
 }
 
@@ -52,26 +67,26 @@ func sqliteTableExists(t *testing.T, db *sql.DB, name string) bool {
 	return count == 1
 }
 
-func TestSQLStoreContract(t *testing.T) {
-	runStoreContractTests(t, func(t *testing.T) Store {
-		store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+func TestStoreContract(t *testing.T) {
+	runStoreContractTests(t, func(t *testing.T) *Store {
+		store, err := Open(context.Background(), filepath.Join(t.TempDir(), "bookmarks.db"))
 		if err != nil {
-			t.Fatalf("OpenSQLStore() error = %v", err)
+			t.Fatalf("Open() error = %v", err)
 		}
 		t.Cleanup(func() { _ = store.Close() })
 		return store
 	})
 }
 
-func TestSQLStorePersistsAcrossReopen(t *testing.T) {
+func TestStorePersistsAcrossReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bookmarks.db")
 
-	store, err := OpenSQLStore(path)
+	store, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, created, err := store.CreateBookmark(context.Background(), CreateInput{
+	_, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 		URL:   "https://example.com/a",
 		Title: "Example",
 	})
@@ -85,13 +100,13 @@ func TestSQLStorePersistsAcrossReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err = OpenSQLStore(path)
+	store, err = Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	got, err := store.ListBookmarks(context.Background(), ListQuery{})
+	got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +119,7 @@ func TestSQLStorePersistsAcrossReopen(t *testing.T) {
 	}
 }
 
-func TestSQLStoreSetTitleIfBlank(t *testing.T) {
+func TestStoreSetBookmarkTitleIfBlank(t *testing.T) {
 	tests := []struct {
 		name         string
 		storedTitle  string
@@ -135,13 +150,13 @@ func TestSQLStoreSetTitleIfBlank(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+			store, err := Open(context.Background(), filepath.Join(t.TempDir(), "bookmarks.db"))
 			if err != nil {
-				t.Fatalf("OpenSQLStore() error = %v", err)
+				t.Fatalf("Open() error = %v", err)
 			}
 			t.Cleanup(func() { _ = store.Close() })
 
-			bookmark, created, err := store.CreateBookmark(context.Background(), CreateInput{
+			bookmark, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 				URL:   "https://example.com/a",
 				Title: tt.storedTitle,
 			})
@@ -152,15 +167,15 @@ func TestSQLStoreSetTitleIfBlank(t *testing.T) {
 				t.Fatal("CreateBookmark() created = false, want true")
 			}
 
-			changed, err := store.SetTitleIfBlank(context.Background(), bookmark.ID, tt.fetchedTitle)
+			changed, err := store.SetBookmarkTitleIfBlank(context.Background(), bookmark.ID, tt.fetchedTitle)
 			if err != nil {
-				t.Fatalf("SetTitleIfBlank() error = %v", err)
+				t.Fatalf("SetBookmarkTitleIfBlank() error = %v", err)
 			}
 			if changed != tt.wantChanged {
-				t.Fatalf("SetTitleIfBlank() changed = %t, want %t", changed, tt.wantChanged)
+				t.Fatalf("SetBookmarkTitleIfBlank() changed = %t, want %t", changed, tt.wantChanged)
 			}
 
-			bookmarks, err := store.ListBookmarks(context.Background(), ListQuery{})
+			bookmarks, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 			if err != nil {
 				t.Fatalf("ListBookmarks() error = %v", err)
 			}
@@ -174,18 +189,18 @@ func TestSQLStoreSetTitleIfBlank(t *testing.T) {
 	}
 }
 
-func TestSQLStoreSetTitleIfBlankMissingBookmarkIsNoOp(t *testing.T) {
-	store, err := OpenSQLStore(filepath.Join(t.TempDir(), "bookmarks.db"))
+func TestStoreSetBookmarkTitleIfBlankMissingBookmarkIsNoOp(t *testing.T) {
+	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "bookmarks.db"))
 	if err != nil {
-		t.Fatalf("OpenSQLStore() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	changed, err := store.SetTitleIfBlank(context.Background(), "missing", "Fetched title")
+	changed, err := store.SetBookmarkTitleIfBlank(context.Background(), "missing", "Fetched title")
 	if err != nil {
-		t.Fatalf("SetTitleIfBlank() error = %v", err)
+		t.Fatalf("SetBookmarkTitleIfBlank() error = %v", err)
 	}
 	if changed {
-		t.Fatal("SetTitleIfBlank() changed = true, want false")
+		t.Fatal("SetBookmarkTitleIfBlank() changed = true, want false")
 	}
 }

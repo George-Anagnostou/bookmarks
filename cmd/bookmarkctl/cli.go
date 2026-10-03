@@ -15,7 +15,7 @@ const version = "dev"
 
 type bookmarkClient interface {
 	CreateBookmark(context.Context, bookmarks.CreateInput) (bookmarks.Bookmark, bool, error)
-	ListBookmarks(context.Context, bookmarks.ListQuery) ([]bookmarks.Bookmark, error)
+	ListBookmarks(context.Context, bookmarks.ListOptions) ([]bookmarks.Bookmark, error)
 	UpdateBookmark(context.Context, string, bookmarks.UpdateInput) (bookmarks.Bookmark, error)
 	DeleteBookmark(context.Context, string) error
 }
@@ -216,7 +216,7 @@ func (app *cli) runList(ctx context.Context, args []string) error {
 		return err
 	}
 
-	listQuery := bookmarks.ListQuery{
+	listOptions := bookmarks.ListOptions{
 		Query:  *query,
 		Limit:  *limit,
 		Offset: *offset,
@@ -228,7 +228,7 @@ func (app *cli) runList(ctx context.Context, args []string) error {
 		Width:  width,
 	}
 
-	bookmarkList, err := client.ListBookmarks(ctx, listQuery)
+	bookmarkList, err := client.ListBookmarks(ctx, listOptions)
 	if err != nil {
 		return fmt.Errorf("list bookmarks: %w", err)
 	}

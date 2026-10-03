@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"bookmarks/internal/bookmarks"
 	"bookmarks/internal/fetcher"
 	"bookmarks/internal/server"
+	"bookmarks/internal/sqlite"
 )
 
 func main() {
@@ -35,7 +35,7 @@ func run(ctx context.Context, cfg config, logger *log.Logger, pageFetcher server
 		return err
 	}
 
-	store, err := bookmarks.OpenSQLStore(cfg.DBPath)
+	store, err := sqlite.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return err
 	}

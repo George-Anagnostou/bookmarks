@@ -70,10 +70,13 @@ See [docs/operations.md](docs/operations.md) for VPS layout, backups, and restor
 ## Project layout
 
 ```text
-cmd/bookmarkd/       API server
-cmd/bookmarkctl/     CLI client
-internal/bookmarks/  domain + SQLite store
-internal/server/     HTTP handlers
+cmd/bookmarkd/        API server startup and dependency wiring
+cmd/bookmarkctl/      CLI client
+internal/bookmarks/  bookmark types, errors, and URL normalization
+internal/access/     person/client types and token helpers
+internal/sqlite/     SQLite connection, schema, and persistence operations
+internal/server/     HTTP handlers and their BookmarkStore interface
 internal/apiclient/  HTTP client used by CLI
+internal/fetcher/    page title fetching
 scripts/             bootstrap, deploy, backup install
 ```

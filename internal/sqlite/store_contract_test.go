@@ -1,17 +1,19 @@
-package bookmarks
+package sqlite
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"bookmarks/internal/bookmarks"
 )
 
-func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
+func runStoreContractTests(t *testing.T, newStore func(t *testing.T) *Store) {
 	t.Helper()
 
 	t.Run("create and list bookmark", func(t *testing.T) {
 		store := newStore(t)
-		bookmark, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		bookmark, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "Example",
 		})
@@ -25,7 +27,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("NormalizedURL = %q", bookmark.NormalizedURL)
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -36,7 +38,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("duplicate normalized url is idempotent", func(t *testing.T) {
 		store := newStore(t)
-		first, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: "https://Example.com:443/a"})
+		first, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: "https://Example.com:443/a"})
 		if err != nil {
 			t.Fatalf("CreateBookmark() first error = %v", err)
 		}
@@ -44,7 +46,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("first CreateBookmark() created = false, want true")
 		}
 
-		second, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: "https://example.com/a"})
+		second, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: "https://example.com/a"})
 		if err != nil {
 			t.Fatalf("CreateBookmark() second error = %v", err)
 		}
@@ -61,7 +63,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		url := "https://example.com/a"
 		title := "Example"
 		source := "laptop"
-		first, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		first, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:    url,
 			Title:  title,
 			Source: source,
@@ -83,7 +85,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("got %v, wanted %v", first.Source, source)
 		}
 
-		bookmarks, err := store.ListBookmarks(context.Background(), ListQuery{})
+		bookmarks, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -107,7 +109,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("list bookmark query searches text fields", func(t *testing.T) {
 		store := newStore(t)
-		inputs := []CreateInput{
+		inputs := []bookmarks.CreateInput{
 			{
 				URL:    "https://sqlite.org/fts5.html",
 				Title:  "SQLite FTS",
@@ -127,7 +129,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 				Source: "mobile",
 			},
 		}
-		createdByURL := make(map[string]Bookmark)
+		createdByURL := make(map[string]bookmarks.Bookmark)
 		for _, input := range inputs {
 			bookmark, created, err := store.CreateBookmark(context.Background(), input)
 			if err != nil {
@@ -153,7 +155,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				got, err := store.ListBookmarks(context.Background(), ListQuery{Query: tt.query})
+				got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{Query: tt.query})
 				if err != nil {
 					t.Fatalf("ListBookmarks() error = %v", err)
 				}
@@ -169,7 +171,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("list bookmark query trims whitespace and empty query lists all", func(t *testing.T) {
 		store := newStore(t)
-		first, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		first, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/first",
 			Title: "First",
 		})
@@ -179,7 +181,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		if !created {
 			t.Fatal("first CreateBookmark() created = false, want true")
 		}
-		second, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		second, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/second",
 			Title: "Second",
 		})
@@ -190,7 +192,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("second CreateBookmark() created = false, want true")
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{Query: "  first  "})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{Query: "  first  "})
 		if err != nil {
 			t.Fatalf("ListBookmarks() trimmed query error = %v", err)
 		}
@@ -198,7 +200,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("trimmed query returned %#v, want first bookmark", got)
 		}
 
-		got, err = store.ListBookmarks(context.Background(), ListQuery{Query: "   "})
+		got, err = store.ListBookmarks(context.Background(), bookmarks.ListOptions{Query: "   "})
 		if err != nil {
 			t.Fatalf("ListBookmarks() empty query error = %v", err)
 		}
@@ -218,7 +220,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			"https://example.com/three",
 			"https://example.com/four",
 		} {
-			_, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: url})
+			_, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: url})
 			if err != nil {
 				t.Fatalf("CreateBookmark(%q) error = %v", url, err)
 			}
@@ -227,7 +229,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			}
 		}
 
-		all, err := store.ListBookmarks(context.Background(), ListQuery{})
+		all, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() all error = %v", err)
 		}
@@ -235,7 +237,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("ListBookmarks() all returned %d bookmarks, want 4", len(all))
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{
 			Limit:  2,
 			Offset: 1,
 		})
@@ -261,7 +263,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			"https://example.com/two",
 			"https://example.com/three",
 		} {
-			_, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: url})
+			_, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: url})
 			if err != nil {
 				t.Fatalf("CreateBookmark(%q) error = %v", url, err)
 			}
@@ -270,12 +272,12 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			}
 		}
 
-		all, err := store.ListBookmarks(context.Background(), ListQuery{})
+		all, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() all error = %v", err)
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{Offset: 1})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{Offset: 1})
 		if err != nil {
 			t.Fatalf("ListBookmarks() offset-only error = %v", err)
 		}
@@ -291,7 +293,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("list bookmark query limit and offset compose", func(t *testing.T) {
 		store := newStore(t)
-		for _, input := range []CreateInput{
+		for _, input := range []bookmarks.CreateInput{
 			{URL: "https://example.com/go-one", Title: "Go one"},
 			{URL: "https://example.com/rust", Title: "Rust"},
 			{URL: "https://example.com/go-two", Title: "Go two"},
@@ -306,7 +308,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			}
 		}
 
-		allGo, err := store.ListBookmarks(context.Background(), ListQuery{Query: "go"})
+		allGo, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{Query: "go"})
 		if err != nil {
 			t.Fatalf("ListBookmarks() all matching error = %v", err)
 		}
@@ -314,7 +316,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("ListBookmarks() all matching returned %d bookmarks, want 3", len(allGo))
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{
 			Query:  "go",
 			Limit:  1,
 			Offset: 1,
@@ -332,18 +334,18 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("check unsupported schemas", func(t *testing.T) {
 		store := newStore(t)
-		_, created, err := store.CreateBookmark(context.Background(), CreateInput{URL: "ftp://example.com"})
-		if !errors.Is(err, ErrUnsupported) {
-			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, ErrUnsupported)
+		_, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{URL: "ftp://example.com"})
+		if !errors.Is(err, bookmarks.ErrUnsupportedScheme) {
+			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, bookmarks.ErrUnsupportedScheme)
 		}
 		if created {
-			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, ErrUnsupported)
+			t.Fatalf("CreateBookmark failed to error: %v, expected %v", err, bookmarks.ErrUnsupportedScheme)
 		}
 	})
 
 	t.Run("update bookmark fields", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:    "https://example.com/a",
 			Title:  "Example",
 			Notes:  "Original notes",
@@ -360,7 +362,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		updatedSource := "different laptop"
 		updatedNotes := "These are some notes"
 
-		updated, err := store.UpdateBookmark(context.Background(), original.ID, UpdateInput{
+		updated, err := store.UpdateBookmark(context.Background(), original.ID, bookmarks.UpdateInput{
 			Title:  &updatedTitle,
 			Notes:  &updatedNotes,
 			Source: &updatedSource,
@@ -396,7 +398,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("update bookmark can clear fields", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:    "https://example.com/a",
 			Title:  "Example",
 			Notes:  "Original notes",
@@ -409,7 +411,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("CreateBookmark() created = false, want true")
 		}
 
-		updated, err := store.UpdateBookmark(context.Background(), original.ID, UpdateInput{
+		updated, err := store.UpdateBookmark(context.Background(), original.ID, bookmarks.UpdateInput{
 			Title:  stringPtr(""),
 			Notes:  stringPtr(""),
 			Source: stringPtr(""),
@@ -433,7 +435,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("update bookmark trims and normalizes url", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:    "https://example.com/a",
 			Title:  "Example",
 			Notes:  "Original notes",
@@ -447,7 +449,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 
 		updatedURL := "  hTTpS://exAMPLE.Com:443/b  "
-		updated, err := store.UpdateBookmark(context.Background(), original.ID, UpdateInput{
+		updated, err := store.UpdateBookmark(context.Background(), original.ID, bookmarks.UpdateInput{
 			URL: &updatedURL,
 		})
 		if err != nil {
@@ -473,7 +475,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("update bookmark returns ErrNoUpdateFields error on empty input", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "Example",
 		})
@@ -484,15 +486,15 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("CreateBookmark() created = false, want true")
 		}
 
-		_, err = store.UpdateBookmark(context.Background(), original.ID, UpdateInput{})
-		if !errors.Is(err, ErrNoUpdateFields) {
-			t.Fatalf("UpdateBookmark() error = %v, want %v", err, ErrNoUpdateFields)
+		_, err = store.UpdateBookmark(context.Background(), original.ID, bookmarks.UpdateInput{})
+		if !errors.Is(err, bookmarks.ErrNoUpdateFields) {
+			t.Fatalf("UpdateBookmark() error = %v, want %v", err, bookmarks.ErrNoUpdateFields)
 		}
 	})
 
 	t.Run("update bookmark returns ErrNotFound error on unknown id", func(t *testing.T) {
 		store := newStore(t)
-		_, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		_, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "Example",
 		})
@@ -503,11 +505,11 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("CreateBookmark() created = false, want true")
 		}
 
-		_, err = store.UpdateBookmark(context.Background(), "abc123", UpdateInput{
+		_, err = store.UpdateBookmark(context.Background(), "abc123", bookmarks.UpdateInput{
 			Title: stringPtr("Updated Title"),
 		})
-		if !errors.Is(err, ErrNotFound) {
-			t.Fatalf("UpdateBookmark() error = %v, want %v", err, ErrNotFound)
+		if !errors.Is(err, bookmarks.ErrNotFound) {
+			t.Fatalf("UpdateBookmark() error = %v, want %v", err, bookmarks.ErrNotFound)
 		}
 	})
 
@@ -520,29 +522,29 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			{
 				name:    "empty url",
 				url:     "",
-				wantErr: ErrEmptyURL,
+				wantErr: bookmarks.ErrEmptyURL,
 			},
 			{
 				name:    "missing host",
 				url:     "https:///path",
-				wantErr: ErrMissingHost,
+				wantErr: bookmarks.ErrMissingHost,
 			},
 			{
 				name:    "url user info",
 				url:     "https://user@example.com:443/a",
-				wantErr: ErrURLUserInfo,
+				wantErr: bookmarks.ErrURLUserInfo,
 			},
 			{
 				name:    "unsupported url",
 				url:     "ftp://example.com",
-				wantErr: ErrUnsupported,
+				wantErr: bookmarks.ErrUnsupportedScheme,
 			},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				store := newStore(t)
-				original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+				original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 					URL:   "https://example.com/a",
 					Title: "Example",
 				})
@@ -553,7 +555,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 					t.Fatal("CreateBookmark() created = false, want true")
 				}
 
-				_, err = store.UpdateBookmark(context.Background(), original.ID, UpdateInput{
+				_, err = store.UpdateBookmark(context.Background(), original.ID, bookmarks.UpdateInput{
 					URL: &tt.url,
 				})
 				if !errors.Is(err, tt.wantErr) {
@@ -565,7 +567,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("update bookmark returns ErrDuplicateURL when normalized url already exists", func(t *testing.T) {
 		store := newStore(t)
-		first, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		first, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "First",
 		})
@@ -576,7 +578,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("first CreateBookmark() created = false, want true")
 		}
 
-		second, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		second, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/b",
 			Title: "Second",
 		})
@@ -588,14 +590,14 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 
 		duplicateURL := "https://EXAMPLE.com:443/a"
-		_, err = store.UpdateBookmark(context.Background(), second.ID, UpdateInput{
+		_, err = store.UpdateBookmark(context.Background(), second.ID, bookmarks.UpdateInput{
 			URL: &duplicateURL,
 		})
-		if !errors.Is(err, ErrDuplicateURL) {
-			t.Fatalf("UpdateBookmark() error = %v, want %v", err, ErrDuplicateURL)
+		if !errors.Is(err, bookmarks.ErrDuplicateURL) {
+			t.Fatalf("UpdateBookmark() error = %v, want %v", err, bookmarks.ErrDuplicateURL)
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -614,7 +616,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("update bookmark allows its own normalized url", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://Example.com:443/a",
 			Title: "Example",
 		})
@@ -626,7 +628,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 
 		updatedURL := "  https://example.com/a  "
-		updated, err := store.UpdateBookmark(context.Background(), original.ID, UpdateInput{
+		updated, err := store.UpdateBookmark(context.Background(), original.ID, bookmarks.UpdateInput{
 			URL: &updatedURL,
 		})
 		if err != nil {
@@ -648,7 +650,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("delete bookmark removes bookmark", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "Example",
 		})
@@ -663,7 +665,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("DeleteBookmark() error = %v", err)
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -674,7 +676,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("delete bookmark removes only one bookmark", func(t *testing.T) {
 		store := newStore(t)
-		first, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		first, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "Example",
 		})
@@ -685,7 +687,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("CreateBookmark() created = false, want true")
 		}
 
-		second, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		second, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/b",
 			Title: "Example 2",
 		})
@@ -703,7 +705,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatalf("DeleteBookmark() error = %v", err)
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}
@@ -717,7 +719,7 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 
 	t.Run("delete bookmark returns ErrNotFound on unknown ID", func(t *testing.T) {
 		store := newStore(t)
-		original, created, err := store.CreateBookmark(context.Background(), CreateInput{
+		original, created, err := store.CreateBookmark(context.Background(), bookmarks.CreateInput{
 			URL:   "https://example.com/a",
 			Title: "Example",
 		})
@@ -728,11 +730,11 @@ func runStoreContractTests(t *testing.T, newStore func(t *testing.T) Store) {
 			t.Fatal("CreateBookmark() created = false, want true")
 		}
 
-		if err := store.DeleteBookmark(context.Background(), "abc123"); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("DeleteBookmark() error = %v, want %v", err, ErrNotFound)
+		if err := store.DeleteBookmark(context.Background(), "abc123"); !errors.Is(err, bookmarks.ErrNotFound) {
+			t.Fatalf("DeleteBookmark() error = %v, want %v", err, bookmarks.ErrNotFound)
 		}
 
-		got, err := store.ListBookmarks(context.Background(), ListQuery{})
+		got, err := store.ListBookmarks(context.Background(), bookmarks.ListOptions{})
 		if err != nil {
 			t.Fatalf("ListBookmarks() error = %v", err)
 		}

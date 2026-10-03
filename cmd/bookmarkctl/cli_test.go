@@ -247,9 +247,9 @@ func TestRunListPassesQueryOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
-	want := bookmarks.ListQuery{Query: "sqlite", Limit: 25, Offset: 50}
-	if client.listQuery != want {
-		t.Fatalf("ListBookmarks query = %#v, want %#v", client.listQuery, want)
+	want := bookmarks.ListOptions{Query: "sqlite", Limit: 25, Offset: 50}
+	if client.listOptions != want {
+		t.Fatalf("ListBookmarks options = %#v, want %#v", client.listOptions, want)
 	}
 }
 
@@ -469,7 +469,7 @@ type fakeBookmarkClient struct {
 	createErr      error
 
 	listCalled    bool
-	listQuery     bookmarks.ListQuery
+	listOptions   bookmarks.ListOptions
 	listBookmarks []bookmarks.Bookmark
 	listErr       error
 
@@ -490,9 +490,9 @@ func (f *fakeBookmarkClient) CreateBookmark(ctx context.Context, input bookmarks
 	return f.createBookmark, f.createCreated, f.createErr
 }
 
-func (f *fakeBookmarkClient) ListBookmarks(ctx context.Context, query bookmarks.ListQuery) ([]bookmarks.Bookmark, error) {
+func (f *fakeBookmarkClient) ListBookmarks(ctx context.Context, options bookmarks.ListOptions) ([]bookmarks.Bookmark, error) {
 	f.listCalled = true
-	f.listQuery = query
+	f.listOptions = options
 	return f.listBookmarks, f.listErr
 }
 
