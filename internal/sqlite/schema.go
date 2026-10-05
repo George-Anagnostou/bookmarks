@@ -1,6 +1,6 @@
 package sqlite
 
-const schemaSQL = `
+const schemaV1 = `
 CREATE TABLE IF NOT EXISTS bookmarks (
   id TEXT PRIMARY KEY,
   url TEXT NOT NULL,

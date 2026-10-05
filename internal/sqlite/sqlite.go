@@ -28,9 +28,9 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
+	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("apply sqlite schema: %w", err)
+		return nil, fmt.Errorf("migrate sqlite database: %w", err)
 	}
 
 	return &Store{db: db}, nil
