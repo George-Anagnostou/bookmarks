@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,6 +123,35 @@ func TestCheckReportsColumnTypeMismatch(t *testing.T) {
 	}
 }
 
+func TestBookmarkColumnsReadsMigrationColumns(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if err := migrate(context.Background(), db); err != nil {
+		t.Fatalf("migrate() error = %v", err)
+	}
+
+	columns, err := bookmarkColumns(context.Background(), db)
+	if err != nil {
+		t.Fatalf("bookmarkColumns() error = %v", err)
+	}
+	if len(columns) != 10 {
+		t.Fatalf("bookmarkColumns() returned %d columns, want 10", len(columns))
+	}
+
+	var urlColumn *columnInfo
+	for i := range columns {
+		if columns[i].Name == "url" {
+			urlColumn = &columns[i]
+			break
+		}
+	}
+	if urlColumn == nil {
+		t.Fatal("bookmarkColumns() did not return url column")
+	}
+	if urlColumn.Type != "TEXT" {
+		t.Errorf("url column type = %q, want TEXT", urlColumn.Type)
+	}
+}
+
 func TestCheckReportsUnexpectedTable(t *testing.T) {
 	path := createCurrentSchemaDatabase(t)
 	db := openMigrationTestDBAt(t, path)
@@ -167,7 +195,7 @@ func TestCheckDoesNotModifyDatabase(t *testing.T) {
 
 func TestCheckReturnsErrorForMissingDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.db")
-	if _, err := Check(context.Background(), path); err == nil || errors.Is(err, ErrCheckNotImplemented) {
+	if _, err := Check(context.Background(), path); err == nil {
 		t.Fatalf("Check() error = %v, want an error opening missing database", err)
 	}
 }
