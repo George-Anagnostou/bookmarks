@@ -8,8 +8,8 @@ import (
 )
 
 // CheckReport describes the database schema and bookmark count observed by
-// Check. SchemaDifferences is empty when the schema matches the expected
-// schema for the latest migration version.
+// Check. SchemaDifferences is empty when the schema properties checked by
+// Check match the expected schema for the latest migration version.
 type CheckReport struct {
 	SchemaVersion     int      `json:"schema_version"`
 	ExpectedVersion   int      `json:"expected_version"`
@@ -18,7 +18,7 @@ type CheckReport struct {
 }
 
 // OK reports whether the observed database is at the latest version and its
-// schema matches the expected schema.
+// checked schema properties match the expected schema.
 func (r CheckReport) OK() bool {
 	return r.SchemaVersion == r.ExpectedVersion && len(r.SchemaDifferences) == 0
 }
@@ -58,11 +58,16 @@ func Check(ctx context.Context, path string) (CheckReport, error) {
 		return CheckReport{}, fmt.Errorf("inspect bookmark columns: %w", err)
 	}
 
-	expectedColumns, err := expectedBookmarkColumns(ctx)
+	actualObjects, err := schemaObjects(ctx, db)
 	if err != nil {
-		return CheckReport{}, fmt.Errorf("build expected bookmark schema: %w", err)
+		return CheckReport{}, fmt.Errorf("inspect schema objects: %w", err)
+	}
+	expectedColumns, expectedObjects, err := expectedSchema(ctx)
+	if err != nil {
+		return CheckReport{}, fmt.Errorf("build expected schema: %w", err)
 	}
 	differences := compareBookmarkColumns(expectedColumns, actualColumns)
+	differences = append(differences, compareSchemaObjects(expectedObjects, actualObjects)...)
 
 	return CheckReport{
 		SchemaVersion:     version,
@@ -70,6 +75,82 @@ func Check(ctx context.Context, path string) (CheckReport, error) {
 		BookmarkCount:     count,
 		SchemaDifferences: differences,
 	}, nil
+}
+
+type schemaObject struct {
+	Type string
+	Name string
+}
+
+func schemaObjects(ctx context.Context, db *sql.DB) ([]schemaObject, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT type, name
+		FROM sqlite_master
+		WHERE type IN ('table', 'index', 'view', 'trigger')
+		  AND substr(name, 1, 7) != 'sqlite_'
+		ORDER BY type, name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var objects []schemaObject
+	for rows.Next() {
+		var object schemaObject
+		if err := rows.Scan(&object.Type, &object.Name); err != nil {
+			return nil, err
+		}
+		objects = append(objects, object)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return objects, nil
+}
+
+func expectedSchema(ctx context.Context) ([]columnInfo, []schemaObject, error) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, nil, fmt.Errorf("open reference database: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := migrate(ctx, db); err != nil {
+		return nil, nil, fmt.Errorf("apply migrations to reference database: %w", err)
+	}
+	objects, err := schemaObjects(ctx, db)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect reference schema objects: %w", err)
+	}
+	columns, err := bookmarkColumns(ctx, db)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect reference bookmark columns: %w", err)
+	}
+	return columns, objects, nil
+}
+
+func compareSchemaObjects(expected, actual []schemaObject) []string {
+	actualByKey := make(map[string]struct{}, len(actual))
+	for _, object := range actual {
+		actualByKey[object.Type+"/"+object.Name] = struct{}{}
+	}
+	expectedByKey := make(map[string]struct{}, len(expected))
+	var differences []string
+	for _, object := range expected {
+		key := object.Type + "/" + object.Name
+		expectedByKey[key] = struct{}{}
+		if _, ok := actualByKey[key]; !ok {
+			differences = append(differences, fmt.Sprintf("missing %s %s", object.Type, object.Name))
+		}
+	}
+	for _, object := range actual {
+		key := object.Type + "/" + object.Name
+		if _, ok := expectedByKey[key]; !ok {
+			differences = append(differences, fmt.Sprintf("unexpected %s %s", object.Type, object.Name))
+		}
+	}
+	return differences
 }
 
 type columnInfo struct {
@@ -113,25 +194,6 @@ func bookmarkColumns(ctx context.Context, db *sql.DB) ([]columnInfo, error) {
 		return nil, err
 	}
 
-	return columns, nil
-}
-
-func expectedBookmarkColumns(ctx context.Context) ([]columnInfo, error) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		return nil, fmt.Errorf("open reference database: %w", err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-
-	if err := migrate(ctx, db); err != nil {
-		return nil, fmt.Errorf("apply migrations to reference database: %w", err)
-	}
-
-	columns, err := bookmarkColumns(ctx, db)
-	if err != nil {
-		return nil, fmt.Errorf("inspect reference bookmark columns: %w", err)
-	}
 	return columns, nil
 }
 

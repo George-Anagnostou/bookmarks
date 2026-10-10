@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -66,10 +67,10 @@ func TestMigrateRollsBackFailedMigration(t *testing.T) {
 		t.Fatalf("initial migrate() error = %v", err)
 	}
 
-	testMigrations := []string{
-		schemaV1,
-		`CREATE TABLE rollback_probe (id INTEGER PRIMARY KEY);
-		 INVALID SQL;`,
+	testMigrations := []migration{
+		{Version: 1, Name: "create bookmarks", SQL: schemaV1},
+		{Version: 2, Name: "failing probe", SQL: `CREATE TABLE rollback_probe (id INTEGER PRIMARY KEY);
+		 INVALID SQL;`},
 	}
 	if err := migrateWith(ctx, db, testMigrations); err == nil {
 		t.Fatal("migrateWith() error = nil, want migration failure")
@@ -80,6 +81,101 @@ func TestMigrateRollsBackFailedMigration(t *testing.T) {
 	}
 	if sqliteTableExists(t, db, "rollback_probe") {
 		t.Fatal("rollback_probe exists after failed migration")
+	}
+}
+
+func TestMigrateIdentifiesFailureAndCanRetry(t *testing.T) {
+	db := openMigrationTestDB(t)
+	ctx := context.Background()
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("initial migrate() error = %v", err)
+	}
+
+	failedMigrations := []migration{
+		migrations[0],
+		{
+			Version: 2,
+			Name:    "add recovery probe",
+			SQL:     "CREATE TABLE recovery_probe (id INTEGER PRIMARY KEY); INVALID SQL;",
+		},
+	}
+	err := migrateWith(ctx, db, failedMigrations)
+	if err == nil {
+		t.Fatal("migrateWith() error = nil, want migration failure")
+	}
+
+	var migrationErr *MigrationError
+	if !errors.As(err, &migrationErr) {
+		t.Fatalf("migrateWith() error type = %T, want *MigrationError", err)
+	}
+	if migrationErr.Version != 2 || migrationErr.Name != "add recovery probe" || migrationErr.Stage != "apply" {
+		t.Errorf("MigrationError = %+v, want version 2, name add recovery probe, stage apply", migrationErr)
+	}
+	if migrationErr.Unwrap() == nil {
+		t.Fatal("MigrationError does not retain its underlying database error")
+	}
+
+	if got := schemaVersion(t, db); got != 1 {
+		t.Fatalf("schema version after failed migration = %d, want 1", got)
+	}
+	if sqliteTableExists(t, db, "recovery_probe") {
+		t.Fatal("recovery_probe exists after failed migration; transaction was not rolled back")
+	}
+
+	retryMigrations := []migration{
+		migrations[0],
+		{
+			Version: 2,
+			Name:    "add recovery probe",
+			SQL:     "CREATE TABLE recovery_probe (id INTEGER PRIMARY KEY);",
+		},
+	}
+	if err := migrateWith(ctx, db, retryMigrations); err != nil {
+		t.Fatalf("retry migrateWith() error = %v", err)
+	}
+	if got := schemaVersion(t, db); got != 2 {
+		t.Errorf("schema version after retry = %d, want 2", got)
+	}
+	if !sqliteTableExists(t, db, "recovery_probe") {
+		t.Error("recovery_probe does not exist after successful retry")
+	}
+}
+
+func TestMigrateRejectsInvalidMigrationMetadata(t *testing.T) {
+	tests := []struct {
+		name       string
+		migrations []migration
+	}{
+		{
+			name: "non-contiguous version",
+			migrations: []migration{
+				{Version: 2, Name: "create bookmarks", SQL: schemaV1},
+			},
+		},
+		{
+			name: "empty name",
+			migrations: []migration{
+				{Version: 1, SQL: schemaV1},
+			},
+		},
+		{
+			name: "empty SQL",
+			migrations: []migration{
+				{Version: 1, Name: "create bookmarks"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openMigrationTestDB(t)
+			if err := migrateWith(context.Background(), db, tt.migrations); err == nil {
+				t.Fatal("migrateWith() error = nil, want invalid migration metadata error")
+			}
+			if got := schemaVersion(t, db); got != 0 {
+				t.Errorf("schema version = %d, want 0", got)
+			}
+		})
 	}
 }
 
