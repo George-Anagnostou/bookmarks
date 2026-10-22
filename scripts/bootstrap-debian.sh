@@ -67,7 +67,7 @@ ReadWritePaths=/var/lib/bookmarks
 WantedBy=multi-user.target
 EOF
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 export BOOKMARKS_DBPATH="$DB_PATH"
 export BOOKMARKS_BACKUP_DIR="$BACKUP_DIR"
 export BOOKMARKS_BACKUP_RETENTION_DAYS="$BACKUP_RETENTION_DAYS"
