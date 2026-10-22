@@ -30,6 +30,7 @@ func TestDeployRemote(t *testing.T) {
 		version       string
 		missingConfig bool
 		failCommand   string
+		noBackup      bool
 		wantError     bool
 		wantInstalled bool
 		wantCommands  string
@@ -46,6 +47,11 @@ func TestDeployRemote(t *testing.T) {
 		{
 			name: "backup failure preserves old binary", database: true, version: "1",
 			failCommand: "restart bookmarks-backup.service", wantError: true,
+			wantCommands: "stop bookmarkd\nrestart bookmarks-backup.service\n",
+		},
+		{
+			name: "missing new backup preserves old binary", database: true, version: "1",
+			noBackup: true, wantError: true,
 			wantCommands: "stop bookmarkd\nrestart bookmarks-backup.service\n",
 		},
 		{
@@ -78,9 +84,13 @@ func TestDeployRemote(t *testing.T) {
 			if tt.database {
 				write(db, "existing database")
 			}
+			backupDir := filepath.Join(dir, "backups")
+			if err := os.Mkdir(backupDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
 			config := filepath.Join(dir, "bookmarkd.env")
 			if !tt.missingConfig {
-				write(config, "BOOKMARKS_DBPATH='"+db+"'\n")
+				write(config, "BOOKMARKS_DBPATH='"+db+"'\nBOOKMARKS_BACKUP_DIR='"+backupDir+"'\n")
 			}
 			backup := filepath.Join(bin, "bookmarks-backup")
 			write(backup, "#!/bin/sh\nexit 99\n") // Must use the service, not this executable directly.
@@ -89,15 +99,25 @@ func TestDeployRemote(t *testing.T) {
 			write(filepath.Join(bin, "systemctl"), `#!/bin/sh
 echo "$*" >> "$TEST_COMMAND_LOG"
 if [ "$*" = "$TEST_FAIL_COMMAND" ]; then exit 1; fi
+if [ "$*" = "restart bookmarks-backup.service" ] && [ "$TEST_NO_BACKUP" = "" ]; then
+    echo "version=$TEST_SCHEMA_VERSION" > "$TEST_BACKUP_DIR/bookmarks-20261022T000000Z.db"
+fi
 `)
+			// Backup fixtures hold "version=N" so the fake can report their version.
 			write(filepath.Join(bin, "sqlite3"), `#!/bin/sh
-[ "$1" = "-readonly" ] && [ "$2" = "$TEST_DB_PATH" ] || exit 1
+[ "$1" = "-readonly" ] || exit 1
+if [ "$2" != "$TEST_DB_PATH" ]; then
+    [ "$3" = 'PRAGMA user_version;' ] && sed -n 's/^version=//p' "$2"
+    exit
+fi
 case "$3" in
     'PRAGMA user_version;') echo "$TEST_SCHEMA_VERSION" ;;
     'SELECT count(*) FROM sqlite_schema'*) echo 2 ;;
     *) exit 1 ;;
 esac
 `)
+			// An older backup must not be mistaken for the pre-deploy backup.
+			write(filepath.Join(backupDir, "bookmarks-20261001T000000Z.db"), "version=1\n")
 			target := filepath.Join(dir, "bookmarkd")
 			candidate := filepath.Join(dir, "candidate")
 			write(target, "old binary")
@@ -107,6 +127,10 @@ esac
 
 			remote := strings.ReplaceAll(body, "/etc/bookmarks/bookmarkd.env", config)
 			remote = strings.ReplaceAll(remote, "/usr/local/sbin/bookmarks-backup", backup)
+			noBackup := ""
+			if tt.noBackup {
+				noBackup = "1"
+			}
 			cmd := exec.Command("sh", "-eu", "-s", "--", candidate, "bookmarkd", target)
 			cmd.Stdin = strings.NewReader(remote)
 			cmd.Env = append(os.Environ(),
@@ -115,6 +139,8 @@ esac
 				"TEST_SCHEMA_VERSION="+tt.version,
 				"TEST_COMMAND_LOG="+logPath,
 				"TEST_FAIL_COMMAND="+tt.failCommand,
+				"TEST_BACKUP_DIR="+backupDir,
+				"TEST_NO_BACKUP="+noBackup,
 			)
 			output, err := cmd.CombinedOutput()
 			if (err != nil) != tt.wantError {
@@ -141,6 +167,21 @@ esac
 			}
 			if string(installed) != wantBinary {
 				t.Fatalf("installed binary = %q, want %q", installed, wantBinary)
+			}
+
+			record, err := os.ReadFile(filepath.Join(backupDir, "pre-deploy.env"))
+			if tt.wantInstalled && tt.database {
+				want := "PRE_DEPLOY_SCHEMA_VERSION=" + tt.version + "\nPRE_DEPLOY_BACKUP=" +
+					filepath.Join(backupDir, "bookmarks-20261022T000000Z.db") + "\n"
+				if err != nil || string(record) != want {
+					t.Fatalf("pre-deploy record = %q, error = %v, want %q", record, err, want)
+				}
+				saved, err := os.ReadFile(filepath.Join(backupDir, "pre-deploy.db"))
+				if err != nil || string(saved) != "version="+tt.version+"\n" {
+					t.Fatalf("pre-deploy backup = %q, error = %v", saved, err)
+				}
+			} else if err == nil {
+				t.Fatalf("unexpected pre-deploy record %q", record)
 			}
 		})
 	}
