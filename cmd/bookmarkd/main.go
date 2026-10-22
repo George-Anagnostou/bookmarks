@@ -14,6 +14,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "check" {
+		if err := runCheck(context.Background(), os.Args[2:], os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	cfg, err := loadConfig(os.LookupEnv)
 	if err != nil {
 		log.Fatal(err)
