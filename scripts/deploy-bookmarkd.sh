@@ -68,33 +68,46 @@ as_root() {
 	fi
 }
 
-data_dir="/var/lib/bookmarks"
-db_path="$data_dir/bookmarks.db"
-if [ -r /etc/bookmarks/bookmarkd.env ]; then
-	# The env file is written by bootstrap and uses shell-compatible KEY=value lines.
-	# shellcheck disable=SC1091
+# Read the same root-owned configuration used by the server and backup service.
+db_path="$(as_root sh -eu -c '
 	. /etc/bookmarks/bookmarkd.env
-	db_path="${BOOKMARKS_DBPATH:-$db_path}"
-fi
+	printf "%s\n" "${BOOKMARKS_DBPATH:?BOOKMARKS_DBPATH must be configured}"
+')"
 case "$db_path" in
 	/*) ;;
-	./*) db_path="$data_dir/${db_path#./}" ;;
-	*) db_path="$data_dir/$db_path" ;;
+	./*) db_path="/var/lib/bookmarks/${db_path#./}" ;;
+	*) db_path="/var/lib/bookmarks/$db_path" ;;
 esac
 
-if [ -f "$db_path" ]; then
-	if [ ! -x /usr/local/sbin/bookmarks-backup ]; then
+if as_root test -f "$db_path"; then
+	if ! as_root test -x /usr/local/sbin/bookmarks-backup; then
 		echo "database exists but /usr/local/sbin/bookmarks-backup is missing or not executable" >&2
 		exit 1
 	fi
-	echo "creating database backup before deploy"
-	as_root /usr/local/sbin/bookmarks-backup
-else
-	echo "database does not exist yet; skipping backup preflight"
+	# Refuse an unversioned production database before stopping the old server.
+	version="$(as_root sqlite3 -readonly "$db_path" 'PRAGMA user_version;')"
+	objects="$(as_root sqlite3 -readonly "$db_path" "SELECT count(*) FROM sqlite_schema WHERE substr(name, 1, 7) != 'sqlite_';")"
+	if [ "$version" = "0" ] && [ "$objects" != "0" ]; then
+		echo "database is unversioned; follow the adoption procedure in docs/operations.md before deploying" >&2
+		exit 1
+	fi
 fi
 
 as_root install -o root -g root -m 0755 "$remote_tmp" "$new"
 as_root rm -f "$remote_tmp"
+
+echo "stopping $service_name before backup and migration"
+as_root systemctl stop "$service_name"
+if as_root test -f "$db_path"; then
+	echo "creating database backup before deploy"
+	# Restart ensures a fresh backup even if a scheduled backup is already running.
+	# The service supplies the database path and backup settings, including the
+	# server's EnvironmentFile. A failure leaves the old binary installed and the
+	# server stopped so the operator can investigate before trying again.
+	as_root systemctl restart bookmarks-backup.service
+else
+	echo "database does not exist yet; skipping backup preflight"
+fi
 
 if [ -x "$target" ]; then
 	echo "preserving previous binary at $previous"
@@ -102,11 +115,11 @@ if [ -x "$target" ]; then
 fi
 
 as_root mv "$new" "$target"
-as_root systemctl restart "$service_name"
+as_root systemctl start "$service_name"
 as_root systemctl --no-pager --full status "$service_name"
 EOF
 
 echo "verifying $VERIFY_URL"
-curl -fsS "$VERIFY_URL" >/dev/null
+curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --retry-max-time 30 --max-time 5 "$VERIFY_URL" >/dev/null
 
 echo "deploy verified"

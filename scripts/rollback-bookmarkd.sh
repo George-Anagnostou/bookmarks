@@ -28,7 +28,8 @@ SERVICE_NAME="${BOOKMARKS_DEPLOY_SERVICE:-bookmarkd}"
 REMOTE_TARGET="${BOOKMARKS_DEPLOY_TARGET:-/usr/local/bin/bookmarkd}"
 VERIFY_URL="${BOOKMARKS_URL%/}/healthz"
 
-echo "rolling back $SERVICE_NAME on $REMOTE"
+echo "restoring the previous binary for $SERVICE_NAME on $REMOTE"
+echo "the database must already be compatible with that binary; see docs/operations.md"
 ssh "$REMOTE" sh -eu -s -- "$SERVICE_NAME" "$REMOTE_TARGET" <<'EOF'
 service_name="$1"
 target="$2"
@@ -47,12 +48,14 @@ if [ ! -x "$previous" ]; then
 	exit 1
 fi
 
-as_root cp "$previous" "$target"
-as_root systemctl restart "$service_name"
+as_root systemctl stop "$service_name"
+as_root install -o root -g root -m 0755 "$previous" "${target}.new"
+as_root mv "${target}.new" "$target"
+as_root systemctl start "$service_name"
 as_root systemctl --no-pager --full status "$service_name"
 EOF
 
 echo "verifying $VERIFY_URL"
-curl -fsS "$VERIFY_URL" >/dev/null
+curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --retry-max-time 30 --max-time 5 "$VERIFY_URL" >/dev/null
 
 echo "rollback verified"

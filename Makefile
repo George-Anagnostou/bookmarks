@@ -32,7 +32,7 @@ fmt-check:
 	test -z "$$(gofmt -l $$(git ls-files '*.go'))"
 
 script-check:
-	sh -n scripts/*.sh
+	@for script in scripts/*.sh; do sh -n "$$script" || exit; done
 
 check: fmt-check script-check test vet test-race
 

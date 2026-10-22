@@ -2,7 +2,7 @@
 set -eu
 
 DATA_DIR="/var/lib/bookmarks"
-DB_PATH="${BOOKMARKS_DBPATH:-$DATA_DIR/bookmarks.db}"
+DB_PATH="${BOOKMARKS_DBPATH:-$DATA_DIR/data/bookmarks.db}"
 BACKUP_DIR="${BOOKMARKS_BACKUP_DIR:-/var/backups/bookmarks}"
 BACKUP_RETENTION_DAYS="${BOOKMARKS_BACKUP_RETENTION_DAYS:-30}"
 
@@ -35,9 +35,15 @@ cat >/usr/local/sbin/bookmarks-backup <<'EOF'
 #!/bin/sh
 set -eu
 
-DB_PATH="${BOOKMARKS_DBPATH:-/var/lib/bookmarks/bookmarks.db}"
+DB_PATH="${BOOKMARKS_DBPATH:-/var/lib/bookmarks/data/bookmarks.db}"
 BACKUP_DIR="${BOOKMARKS_BACKUP_DIR:-/var/backups/bookmarks}"
 RETENTION_DAYS="${BOOKMARKS_BACKUP_RETENTION_DAYS:-30}"
+
+case "$DB_PATH" in
+	/*) ;;
+	./*) DB_PATH="/var/lib/bookmarks/${DB_PATH#./}" ;;
+	*) DB_PATH="/var/lib/bookmarks/$DB_PATH" ;;
+esac
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_path="${BACKUP_DIR}/bookmarks-${timestamp}.db"
@@ -83,6 +89,7 @@ Type=oneshot
 Environment=BOOKMARKS_DBPATH=$DB_PATH
 Environment=BOOKMARKS_BACKUP_DIR=$BACKUP_DIR
 Environment=BOOKMARKS_BACKUP_RETENTION_DAYS=$BACKUP_RETENTION_DAYS
+EnvironmentFile=/etc/bookmarks/bookmarkd.env
 ExecStart=/usr/local/sbin/bookmarks-backup
 EOF
 
