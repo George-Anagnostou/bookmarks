@@ -13,6 +13,7 @@ type migration struct {
 	SQL     string
 }
 
+// Released migrations are immutable. Append new versions to this list.
 var migrations = []migration{
 	{Version: 1, Name: "create bookmarks", SQL: schemaV1},
 }
@@ -39,8 +40,10 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	return migrateWith(ctx, db, migrations)
 }
 
-// migrateWith applies migrationList transactionally. It accepts an explicit
-// list so migration behavior can be tested without changing package state.
+// migrateWith applies all pending migrations in one transaction. Migration SQL
+// must not manage transactions itself. Only one application process should use
+// the database during an upgrade. The explicit list keeps tests independent of
+// package state.
 func migrateWith(ctx context.Context, db *sql.DB, migrationList []migration) error {
 	if err := validateMigrations(migrationList); err != nil {
 		return fmt.Errorf("validate migrations: %w", err)
@@ -57,8 +60,27 @@ func migrateWith(ctx context.Context, db *sql.DB, migrationList []migration) err
 		return fmt.Errorf("read schema version: %w", err)
 	}
 
-	if version < 0 || version > len(migrationList) {
-		return fmt.Errorf("validate schema version: %d", version)
+	if version < 0 {
+		return fmt.Errorf("invalid database schema version %d: must be nonnegative", version)
+	}
+	if version > len(migrationList) {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", version, len(migrationList))
+	}
+
+	// Version 0 denotes an empty database, not an unknown existing schema.
+	if version == 0 {
+		var hasObjects bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM sqlite_schema
+				WHERE substr(name, 1, 7) != 'sqlite_'
+			)
+		`).Scan(&hasObjects); err != nil {
+			return fmt.Errorf("inspect unversioned database: %w", err)
+		}
+		if hasObjects {
+			return fmt.Errorf("database has schema objects but schema version is 0: inspect and adopt the existing schema before starting (see docs/operations.md)")
+		}
 	}
 
 	for i := version; i < len(migrationList); i++ {

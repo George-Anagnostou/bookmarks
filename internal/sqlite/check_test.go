@@ -63,6 +63,28 @@ func TestCheckReportsSchemaVersionMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckReportsMissingTable(t *testing.T) {
+	path := createCurrentSchemaDatabase(t)
+	db := openMigrationTestDBAt(t, path)
+	if _, err := db.Exec("DROP TABLE bookmarks"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Check(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Check() error = %v, want a schema difference", err)
+	}
+	if report.OK() || !containsDifference(report.SchemaDifferences, "missing table bookmarks") {
+		t.Fatalf("Check() report = %+v, want missing bookmarks table", report)
+	}
+	if report.BookmarkCount != 0 {
+		t.Fatalf("bookmark count = %d, want 0 for missing table", report.BookmarkCount)
+	}
+}
+
 func TestCheckReportsMissingIndex(t *testing.T) {
 	path := createCurrentSchemaDatabase(t)
 	db := openMigrationTestDBAt(t, path)
@@ -125,7 +147,7 @@ func TestCheckReportsColumnTypeMismatch(t *testing.T) {
 
 func TestBookmarkColumnsReadsMigrationColumns(t *testing.T) {
 	db := openMigrationTestDB(t)
-	if err := migrate(context.Background(), db); err != nil {
+	if err := migrateWith(context.Background(), db, migrations[:1]); err != nil {
 		t.Fatalf("migrate() error = %v", err)
 	}
 

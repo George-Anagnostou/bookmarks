@@ -9,7 +9,8 @@ import (
 
 // CheckReport describes the database schema and bookmark count observed by
 // Check. SchemaDifferences is empty when the schema properties checked by
-// Check match the expected schema for the latest migration version.
+// Check match the expected schema for the latest migration version. BookmarkCount
+// is zero when the bookmarks table is missing; SchemaDifferences reports this.
 type CheckReport struct {
 	SchemaVersion     int      `json:"schema_version"`
 	ExpectedVersion   int      `json:"expected_version"`
@@ -48,11 +49,6 @@ func Check(ctx context.Context, path string) (CheckReport, error) {
 		return CheckReport{}, err
 	}
 
-	var count int64
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM bookmarks").Scan(&count); err != nil {
-		return CheckReport{}, err
-	}
-
 	actualColumns, err := bookmarkColumns(ctx, db)
 	if err != nil {
 		return CheckReport{}, fmt.Errorf("inspect bookmark columns: %w", err)
@@ -61,6 +57,15 @@ func Check(ctx context.Context, path string) (CheckReport, error) {
 	actualObjects, err := schemaObjects(ctx, db)
 	if err != nil {
 		return CheckReport{}, fmt.Errorf("inspect schema objects: %w", err)
+	}
+	var count int64
+	for _, object := range actualObjects {
+		if object.Type == "table" && object.Name == "bookmarks" {
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM bookmarks").Scan(&count); err != nil {
+				return CheckReport{}, fmt.Errorf("count bookmarks: %w", err)
+			}
+			break
+		}
 	}
 	expectedColumns, expectedObjects, err := expectedSchema(ctx)
 	if err != nil {

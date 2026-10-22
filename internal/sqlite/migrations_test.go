@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,7 +64,7 @@ func TestMigrateRollsBackFailedMigration(t *testing.T) {
 
 	// Start from a successfully applied version 1, as if this database were
 	// being upgraded by a later release.
-	if err := migrate(ctx, db); err != nil {
+	if err := migrateWith(ctx, db, migrations[:1]); err != nil {
 		t.Fatalf("initial migrate() error = %v", err)
 	}
 
@@ -87,7 +88,7 @@ func TestMigrateRollsBackFailedMigration(t *testing.T) {
 func TestMigrateIdentifiesFailureAndCanRetry(t *testing.T) {
 	db := openMigrationTestDB(t)
 	ctx := context.Background()
-	if err := migrate(ctx, db); err != nil {
+	if err := migrateWith(ctx, db, migrations[:1]); err != nil {
 		t.Fatalf("initial migrate() error = %v", err)
 	}
 
@@ -138,6 +139,161 @@ func TestMigrateIdentifiesFailureAndCanRetry(t *testing.T) {
 	}
 	if !sqliteTableExists(t, db, "recovery_probe") {
 		t.Error("recovery_probe does not exist after successful retry")
+	}
+}
+
+func TestMigrateUpgradePreservesDataAndDoesNotReapply(t *testing.T) {
+	db := openMigrationTestDB(t)
+	ctx := context.Background()
+	if err := migrateWith(ctx, db, migrations[:1]); err != nil {
+		t.Fatal(err)
+	}
+	insertMigrationBookmark(t, db)
+
+	upgrade := []migration{
+		migrations[0],
+		{Version: 2, Name: "add rating", SQL: `ALTER TABLE bookmarks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;`},
+		{Version: 3, Name: "update title", SQL: `UPDATE bookmarks SET title = title || ' migrated';`},
+	}
+	for run := 1; run <= 2; run++ {
+		if err := migrateWith(ctx, db, upgrade); err != nil {
+			t.Fatalf("upgrade run %d: %v", run, err)
+		}
+		if got := schemaVersion(t, db); got != 3 {
+			t.Fatalf("schema version = %d, want 3", got)
+		}
+		assertMigrationBookmark(t, db, "Original migrated")
+		var rating int
+		if err := db.QueryRow("SELECT rating FROM bookmarks WHERE id = 'one'").Scan(&rating); err != nil {
+			t.Fatal(err)
+		}
+		if rating != 0 {
+			t.Fatalf("rating = %d, want default 0", rating)
+		}
+	}
+}
+
+func TestMigrateRollsBackEntireUpgrade(t *testing.T) {
+	db := openMigrationTestDB(t)
+	ctx := context.Background()
+	if err := migrateWith(ctx, db, migrations[:1]); err != nil {
+		t.Fatal(err)
+	}
+	insertMigrationBookmark(t, db)
+
+	upgrade := []migration{
+		migrations[0],
+		{Version: 2, Name: "change schema and data", SQL: `
+			ALTER TABLE bookmarks ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;
+			UPDATE bookmarks SET title = 'Changed';
+		`},
+		{Version: 3, Name: "fail later", SQL: `INVALID SQL;`},
+	}
+	err := migrateWith(ctx, db, upgrade)
+	var migrationErr *MigrationError
+	if !errors.As(err, &migrationErr) || migrationErr.Version != 3 {
+		t.Fatalf("upgrade error = %v, want failure at version 3", err)
+	}
+	if got := schemaVersion(t, db); got != 1 {
+		t.Fatalf("schema version = %d, want 1", got)
+	}
+	assertMigrationBookmark(t, db, "Original")
+	columns, err := bookmarkColumns(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range columns {
+		if column.Name == "rating" {
+			t.Fatal("rating column survived rollback of the upgrade")
+		}
+	}
+}
+
+func TestMigrateRejectsUnversionedSchema(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		schema string
+	}{
+		{name: "matching version 1", schema: schemaV1},
+		{name: "incompatible bookmarks", schema: `CREATE TABLE bookmarks (title TEXT, created_at TEXT);`},
+		{name: "unrelated table", schema: `CREATE TABLE other (id INTEGER PRIMARY KEY);`},
+		{name: "view only", schema: `CREATE VIEW other AS SELECT 1;`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openMigrationTestDB(t)
+			if _, err := db.Exec(tt.schema); err != nil {
+				t.Fatal(err)
+			}
+			if tt.name == "matching version 1" {
+				insertMigrationBookmark(t, db)
+			}
+			var before string
+			if err := db.QueryRow("SELECT group_concat(sql, ';') FROM sqlite_schema").Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			err := migrate(context.Background(), db)
+			if err == nil || !strings.Contains(err.Error(), "schema version is 0") {
+				t.Fatalf("migrate() error = %v, want unversioned-schema error", err)
+			}
+			if got := schemaVersion(t, db); got != 0 {
+				t.Fatalf("schema version = %d, want 0", got)
+			}
+			var after string
+			if err := db.QueryRow("SELECT group_concat(sql, ';') FROM sqlite_schema").Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if after != before {
+				t.Fatalf("schema changed after rejection: before %q, after %q", before, after)
+			}
+			if tt.name == "matching version 1" {
+				assertMigrationBookmark(t, db, "Original")
+			}
+		})
+	}
+}
+
+func TestMigrateRejectsNegativeSchemaVersion(t *testing.T) {
+	db := openMigrationTestDB(t)
+	if _, err := db.Exec("PRAGMA user_version = -1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(context.Background(), db); err == nil {
+		t.Fatal("migrate() succeeded with a negative schema version")
+	}
+	if got := schemaVersion(t, db); got != -1 {
+		t.Fatalf("schema version = %d, want unchanged -1", got)
+	}
+	if sqliteTableExists(t, db, "bookmarks") {
+		t.Fatal("migration ran despite invalid schema version")
+	}
+}
+
+func insertMigrationBookmark(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`
+		INSERT INTO bookmarks (id, url, normalized_url, title, notes, created_at, updated_at)
+		VALUES ('one', 'https://example.com', 'https://example.com/', 'Original', 'Keep these notes',
+		        '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+	`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertMigrationBookmark(t *testing.T, db *sql.DB, wantTitle string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM bookmarks").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("bookmark count = %d, want 1", count)
+	}
+	var title, url, notes string
+	if err := db.QueryRow("SELECT title, url, notes FROM bookmarks WHERE id = 'one'").Scan(&title, &url, &notes); err != nil {
+		t.Fatal(err)
+	}
+	if title != wantTitle || url != "https://example.com" || notes != "Keep these notes" {
+		t.Fatalf("unexpected bookmark: title=%q url=%q notes=%q", title, url, notes)
 	}
 }
 
