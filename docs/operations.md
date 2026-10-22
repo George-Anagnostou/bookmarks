@@ -12,7 +12,9 @@ internet → nginx :443 → bookmarkd 127.0.0.1:8081 → SQLite
 | `/etc/bookmarks/bookmarkd.env` | Server config (mode 0600) |
 | `/var/lib/bookmarks/data/bookmarks.db` | SQLite database |
 | `/var/backups/bookmarks/` | Daily backup files |
+| `/var/backups/bookmarks/pre-deploy.{db,env}` | Backup and schema version from the last deploy |
 | `/usr/local/sbin/bookmarks-backup` | Backup script |
+| `/usr/local/sbin/bookmarks-offsite` | Offsite copy script |
 
 Server env (`/etc/bookmarks/bookmarkd.env`):
 
@@ -23,6 +25,16 @@ BOOKMARKS_TOKEN=<token>
 ```
 
 Use an absolute `BOOKMARKS_DBPATH` on the VPS.
+
+Optional settings in the same file:
+
+| Variable | Purpose |
+|----------|---------|
+| `BOOKMARKS_BACKUP_DIR` | Backup directory used by deploy and rollback (default `/var/backups/bookmarks`; keep it equal to the backup unit's directory) |
+| `BOOKMARKS_OFFSITE_DEST` | Offsite destination; unset disables the offsite copy |
+| `BOOKMARKS_OFFSITE_TOOL` | `rsync` (default) or `rclone` |
+| `RSYNC_RSH` | rsync remote shell, e.g. `ssh -i /root/.ssh/bookmarks-offsite` |
+| `RCLONE_CONFIG` | rclone config file, e.g. `/root/.config/rclone/rclone.conf` |
 
 ## First-time bootstrap
 
@@ -66,24 +78,62 @@ the old server with `sudo systemctl start bookmarkd`. If startup or health
 verification fails, inspect `sudo journalctl -u bookmarkd -n 50 --no-pager`.
 The script does not automatically restore a database or binary.
 
+After the pre-deploy backup succeeds, deployment copies it to
+`/var/backups/bookmarks/pre-deploy.db` and records its schema version in
+`pre-deploy.env`. Retention never deletes these files; the next deploy replaces
+them. Together with `bookmarkd.previous` they are what `make rollback` uses.
+
 To verify an already deployed server without building or deploying:
 
 ```sh
 make verify
 ```
 
-Binary rollback (only when the database is compatible with the previous binary):
+## Rollback
 
 ```sh
 make rollback
 ```
 
-If migration failed, the migration transaction leaves the previous schema,
-data, and version intact. If migration committed successfully, the old binary
-may reject the newer database. In that case, follow the restore procedure and
-restore the matching previous binary before starting the service. A backup
-restore loses changes made after that backup. Preserve the failed release's
-database files for later inspection.
+The script first inspects the VPS without changing anything and picks a mode:
+
+| Mode | When | What happens |
+|------|------|--------------|
+| `binary` | No database, or its schema version is not newer than the pre-deploy version | Installs `bookmarkd.previous`; data untouched. No prompt. |
+| `restore` | The deploy migrated the database (current version > pre-deploy version) | Asks you to type `restore`, then also replaces the database with `pre-deploy.db` |
+| `unknown` | No `pre-deploy.env` (e.g. last deploy predates this feature) | Refuses |
+
+If migration failed, the migration transaction leaves the previous schema, data,
+and version intact, so a binary rollback is enough. If migration committed, the
+old binary rejects the newer database, so the database must go back too.
+
+A `restore` rollback:
+
+1. checks `pre-deploy.db` passes `integrity_check` and has the recorded version;
+2. stops `bookmarkd`, `bookmarks-backup.timer`, and `bookmarks-backup.service`;
+3. moves the current database and its WAL/SHM files to
+   `/var/backups/bookmarks/rollback-XXXXXXXX/` for inspection;
+4. installs `pre-deploy.db` as the database;
+5. installs `bookmarkd.previous` (the replaced binary is kept as
+   `bookmarkd.rolled-back`), starts the server and backup timer, and checks
+   `/healthz`.
+
+**A restore loses every change written after the deploy.** Recover those by hand
+from the `rollback-*` copy if needed.
+
+Overrides, for use from your development machine:
+
+```sh
+BOOKMARKS_ROLLBACK_CONFIRM=restore make rollback   # skip the prompt
+BOOKMARKS_ROLLBACK_MODE=binary make rollback       # unknown mode: you have
+                                                   # verified the previous binary
+                                                   # supports the current schema
+```
+
+The apply step re-checks the plan and refuses if it changed after you confirmed.
+Rollback leaves `bookmarkd.previous` in place; to go forward again, fix the
+release and run `make update`. For any other situation (older backups, no
+`.previous`), use the manual restore procedure below.
 
 Deploy config (`.env.deploy`):
 
@@ -129,6 +179,66 @@ service to require a fresh backup with no intervening application writes.
 Use the systemd service for manual backups too: it supplies the configured
 database path, backup directory, and retention settings. The server environment
 file takes precedence over the unit's database-path default.
+
+## Offsite copy
+
+`make install-backups` also installs `/usr/local/sbin/bookmarks-offsite` and
+`bookmarks-offsite.timer` (daily ~04:15 UTC, an hour after the backup). The job
+copies `bookmarks-*.db` files to `BOOKMARKS_OFFSITE_DEST` and never deletes
+anything at the destination, so prune it separately. With no destination
+configured it logs a skip and succeeds.
+
+Configure it in `/etc/bookmarks/bookmarkd.env`, for example:
+
+```text
+# rsync over SSH to another machine
+BOOKMARKS_OFFSITE_DEST=backup@backup.example.net:bookmarks/
+RSYNC_RSH="ssh -i /root/.ssh/bookmarks-offsite -o BatchMode=yes"
+
+# or any rclone remote (S3, B2, ...)
+BOOKMARKS_OFFSITE_TOOL=rclone
+BOOKMARKS_OFFSITE_DEST=offsite:bookmarks-backups
+RCLONE_CONFIG=/root/.config/rclone/rclone.conf
+```
+
+Both `sh` and systemd read this file, so double-quote values containing spaces.
+Use a dedicated key or credential that can only write to that location. rclone
+is not installed by `make install-backups`; install it yourself if you use it.
+Test and inspect:
+
+```sh
+sudo systemctl start bookmarks-offsite.service
+journalctl -u bookmarks-offsite.service -n 20 --no-pager
+systemctl list-timers 'bookmarks-*'
+```
+
+Prefer pulling instead? Leave `BOOKMARKS_OFFSITE_DEST` unset and run, from the
+trusted machine, something like
+`rsync -a --include='bookmarks-*.db' --exclude='*' vps:/var/backups/bookmarks/ ~/Backups/bookmarks/`.
+
+## Restore drill
+
+Prove backups restore. From your development machine:
+
+```sh
+make restore-drill
+```
+
+This runs `scripts/restore-drill.sh` on the VPS as root. It copies the newest
+`bookmarks-*.db` to a temporary directory, runs `PRAGMA integrity_check`,
+prints the schema version and bookmark count, runs `bookmarkd check` (the
+installed binary's read-only schema check), and deletes the copy. The live
+database and services are not touched. It warns if the newest backup is more
+than about two days old.
+
+To drill an offsite copy, download it to a directory and run:
+
+```sh
+make restore-drill-local BACKUPS=~/Backups/bookmarks
+```
+
+Run a drill after setup, after schema changes, and monthly. Compare the count to
+`bookmarkctl` output to spot an unexpected drop.
 
 ## One-time adoption of an existing version-0 database
 
@@ -248,10 +358,5 @@ processes using this database, including any interactive SQLite sessions.
    sudo systemctl start bookmarks-backup.timer
    ```
 
-Run a restore drill to a temp path once after setup. Restarting with a newer
-binary automatically applies its pending migrations to the restored database.
-
-## Future: offsite copy
-
-Not implemented yet. Planned approach: pull backups from a trusted machine with
-`rsync` over SSH, e.g. weekly to `~/Backups/bookmarks/`.
+Restarting with a newer binary automatically applies its pending migrations to
+the restored database.

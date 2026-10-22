@@ -27,8 +27,9 @@
 
 ### Operations
 
-- Offsite backup copy to a trusted machine (`rsync` pull).
-- Restore drill documented as a recurring habit.
+- Offsite backup copy (`bookmarks-offsite` timer; rsync or rclone push). Done on `ops/safety-net`.
+- Restore drill (`make restore-drill`). Done on `ops/safety-net`.
+- Migration-aware rollback and CI. Done on `ops/safety-net`.
 - Optional deploy-user instead of root SSH.
 
 ## Later
