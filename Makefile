@@ -17,7 +17,7 @@ export BOOKMARKS_DEPLOY_USER
 export BOOKMARKS_DOMAIN
 export BOOKMARKS_URL
 
-.PHONY: test test-race vet fmt-check script-check check build-server build-cli install-cli verify update rollback install-backups clean
+.PHONY: test test-race vet fmt-check script-check check build-server build-cli install-cli verify update rollback install-backups restore-drill restore-drill-local clean
 
 test:
 	$(GO) test ./...
@@ -33,6 +33,7 @@ fmt-check:
 
 script-check:
 	@for script in scripts/*.sh; do sh -n "$$script" || exit; done
+	@if command -v shellcheck >/dev/null; then shellcheck scripts/*.sh; else echo "shellcheck not installed; skipping lint"; fi
 
 check: fmt-check script-check test vet test-race
 
@@ -61,6 +62,16 @@ rollback:
 
 install-backups:
 	./scripts/remote-install-backups.sh
+
+restore-drill:
+	./scripts/remote-restore-drill.sh
+
+# Run the drill against local copies, e.g. make restore-drill-local BACKUPS=~/bookmarks-backups
+restore-drill-local:
+	test -n "$(BACKUPS)"
+	mkdir -p "$(DIST_DIR)"
+	$(GO) build -o "$(DIST_DIR)/bookmarkd-local" ./cmd/bookmarkd
+	BOOKMARKD_BIN="$(DIST_DIR)/bookmarkd-local" ./scripts/restore-drill.sh "$(BACKUPS)"
 
 clean:
 	rm -rf "$(DIST_DIR)"

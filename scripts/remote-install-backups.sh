@@ -16,7 +16,7 @@ else
 	REMOTE="$REMOTE_HOST"
 fi
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 
 echo "installing bookmark backups on $REMOTE"
 ssh "$REMOTE" "sh -eu -s" <"$SCRIPT_DIR/install-bookmarks-backup.sh"
